@@ -1,11 +1,15 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import AnalysisForm, { type AnalysisParams } from '@/components/AnalysisForm';
 import StreamingOutput from '@/components/StreamingOutput';
 import HistoryPanel from '@/components/HistoryPanel';
 import ThemeToggle from '@/components/ThemeToggle';
 import ClaudeAuthStatus from '@/components/ClaudeAuthStatus';
+import type { ChartDataPayload } from '@/components/charts/CandlestickChart';
+
+const CandlestickChart = dynamic(() => import('@/components/charts/CandlestickChart'), { ssr: false });
 
 export default function Home() {
   const [content, setContent] = useState('');
@@ -15,6 +19,7 @@ export default function Home() {
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [usageRefreshTrigger, setUsageRefreshTrigger] = useState(0);
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
+  const [chartData, setChartData] = useState<ChartDataPayload | null>(null);
   const [progress, setProgress] = useState(0);
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const streamStartRef = useRef<number>(0);
@@ -50,8 +55,17 @@ export default function Home() {
     setCurrentTicker(params.ticker);
     setCurrentAnalysisDate(todayDate);
     setSelectedHistoryId(null);
+    setChartData(null);
     setProgress(0);
     setElapsedSecs(0);
+
+    // 차트 데이터 병렬 fetch (분석 스트리밍과 동시에)
+    fetch(`/api/chart-data?ticker=${encodeURIComponent(params.ticker)}&period=${params.period}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: ChartDataPayload | null) => {
+        if (d?.candles?.length) setChartData(d);
+      })
+      .catch(() => null);
 
     try {
       const res = await fetch('/api/analyze-cli', {
@@ -98,8 +112,13 @@ export default function Home() {
       const data = await res.json();
       setContent(data.content);
       setCurrentTicker(data.ticker);
-      // 다운로드 파일명을 해당 분석의 날짜로 고정
       setCurrentAnalysisDate(createdAt.slice(0, 10).replace(/-/g, ''));
+
+      setChartData(null);
+      fetch(`/api/chart-data?ticker=${encodeURIComponent(data.ticker)}&period=6m`)
+        .then(r => r.ok ? r.json() : null)
+        .then((d: ChartDataPayload | null) => { if (d?.candles?.length) setChartData(d); })
+        .catch(() => null);
     }
   };
 
@@ -224,6 +243,17 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* 캔들차트 */}
+        {currentTicker && (
+          chartData ? (
+            <CandlestickChart data={chartData} ticker={currentTicker} />
+          ) : (
+            <div className="h-[52px] flex items-center px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
+              <span className="text-xs text-gray-400 dark:text-gray-500 animate-pulse">차트 데이터 로딩 중...</span>
+            </div>
+          )
+        )}
 
         {/* 스트리밍 출력 */}
         <div className="flex-1 overflow-hidden bg-white dark:bg-gray-950 transition-colors">
