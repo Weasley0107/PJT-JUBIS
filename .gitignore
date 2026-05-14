@@ -1,0 +1,26 @@
+# Dependencies
+web/node_modules/
+
+# Next.js build output
+web/.next/
+web/out/
+
+# TypeScript build cache
+web/tsconfig.tsbuildinfo
+
+# SQLite database files
+web/stock_analyses.db
+web/stock_analyses.db-shm
+web/stock_analyses.db-wal
+
+# Auto-generated stock analysis reports
+web/*_analysis_*.md
+
+# Environment variables
+.env
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+Thumbs.db

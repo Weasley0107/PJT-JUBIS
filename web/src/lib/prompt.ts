@@ -1,0 +1,98 @@
+export type PeriodCode = '3m' | '6m' | '1y' | '2y' | '3y';
+export type TechnicalLevel = 'basic' | 'standard' | 'advanced';
+
+const PERIOD_LABELS: Record<PeriodCode, string> = {
+  '3m': '3개월', '6m': '6개월', '1y': '1년', '2y': '2년', '3y': '3년',
+};
+
+const TECHNICAL_LABELS: Record<TechnicalLevel, string> = {
+  basic: '기본 (이동평균선)',
+  standard: '표준 (이동평균+MACD+RSI)',
+  advanced: '고급 (표준+볼린저+피보나치+거래량)',
+};
+
+export function buildPrompt(params: {
+  ticker: string;
+  period: PeriodCode;
+  technical: TechnicalLevel;
+  compare: string;
+}): string {
+  const { ticker, period, technical, compare } = params;
+
+  const advancedNote =
+    technical === 'advanced'
+      ? '기술적 분석에 피보나치 되돌림, VWAP, 스토캐스틱도 추가해줘.'
+      : technical === 'basic'
+      ? '기술적 분석은 20/60/120일 이동평균선과 지지·저항선만 포함해줘.'
+      : '';
+
+  const compareNote =
+    compare.trim()
+      ? `비교 분석 대상: ${compare} — 섹션 7 산업 분석에서 경쟁사 비교표를 추가해줘.`
+      : '';
+
+  return `당신은 전문 주식 분석가입니다. 다음 조건으로 ${ticker} 종목에 대한 종합 분석 리포트를 작성해주세요.
+
+분석 조건:
+- 미국 NYSE/NASDAQ 상장 종목이야. 달러($) 단위로 분석하고, SEC 공시 기준 재무제표를 사용해.
+- 분석 기간: ${PERIOD_LABELS[period]}
+- 기술적 분석 레벨: ${TECHNICAL_LABELS[technical]}
+${advancedNote}
+${compareNote}
+
+아래 10개 섹션으로 구성된 종합 리포트를 마크다운 형식으로 작성해주세요. WebSearch로 실시간 데이터를 반드시 수집하세요.
+
+---
+
+# ${ticker} 종합 분석 리포트
+
+## 섹션 1. 종목 기본 정보
+- 종목명 / 티커 / 거래소 / 업종
+- 현재 주가, 시가총액, 52주 고저가, 평균 거래량(20일)
+
+## 섹션 2. 주가 동향 및 수급 분석 (최근 ${PERIOD_LABELS[period]})
+- 주가 흐름 요약 (고점, 저점, 전환점)
+- 현재 주가의 52주 고저가 대비 위치(%)
+- 향후 6개월 주가 촉매 및 리스크
+
+## 섹션 3. 기술적 분석 (${PERIOD_LABELS[period]} 일봉 기준)
+- 20일선 / 60일선 / 120일선 현재값, 배열 상태(정배열/역배열)
+- MACD: 현재값, Signal 대비 상태, 크로스 여부
+- RSI(14일): 현재값, 상태 판단
+- 볼린저밴드 위치
+- 지지·저항 구간
+- **기술적 종합 판단: 매수 / 관망 / 매도**
+
+## 섹션 4. 밸류에이션 지표
+PER(TTM), Forward PER, PBR, ROE, EV/EBITDA, PSR, 배당수익률 — 업종 평균 대비 표로 정리
+
+## 섹션 5. 3개년 재무제표 분석
+- 손익계산서: 매출액, 영업이익, 영업이익률, 순이익, EPS (2022·2023·2024)
+- 재무상태표: 부채비율, 유동비율, 이자보상배율
+- 현금흐름: 영업/투자/재무 현금흐름, FCF
+- 수익성/안정성/성장성 별점 평가
+
+## 섹션 6. 최근 분기 실적 발표 분석
+- 발표 분기, 주요 수치, 컨센서스 대비(어닝 서프라이즈/미스 %), 경영진 가이던스, 발표 후 주가 반응
+
+## 섹션 7. 산업 분석 및 경쟁 환경
+- 글로벌 시장 규모 및 성장률, 경쟁사 비교표${compareNote ? ', 비교 대상 포함' : ''}
+- 미국·중국 정책 이슈, AI·반도체 메가트렌드 연관성, 사이클 위치
+
+## 섹션 8. 최신 뉴스 및 애널리스트 의견
+- 최근 1개월 주요 뉴스 3건 (날짜·제목·주가 영향)
+- 애널리스트 컨센서스: 매수/중립/매도 비율, 평균 목표주가, 상승여력(%)
+
+## 섹션 9. 투자 강점 & 리스크
+- Bull Case 3가지 / Bear Case 3가지
+- 리스크 레벨: 낮음 / 보통 / 높음
+
+## 섹션 10. 투자 전략별 종합 평가
+**장기(1년↑)**: 매력도 ★/5, 핵심 포인트, 목표주가, 판단
+**단기(1~3개월)**: 매력도 ★/5, 기술적 근거, 목표가/손절가, 이벤트 일정
+**종합 스코어카드**: 재무·성장·밸류·기술·산업·뉴스 각 /5점 → 합계 /30점
+**최종 결론**: 한 줄 요약
+
+---
+※ 본 분석은 정보 제공 목적이며 투자 권유가 아닙니다.`;
+}
