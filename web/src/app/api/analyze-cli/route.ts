@@ -1,10 +1,7 @@
 import { spawn } from 'child_process';
-import { writeFile, mkdir } from 'fs/promises';
-import path from 'path';
 import { NextRequest } from 'next/server';
 import { buildPrompt, type PeriodCode, type TechnicalLevel } from '@/lib/prompt';
 import { saveAnalysis } from '@/lib/db';
-import { ANALYSES_DIR, analysisFilename } from '@/lib/paths';
 
 function detectStderrError(stderr: string): string | null {
   const s = stderr.toLowerCase();
@@ -71,7 +68,6 @@ export async function POST(request: NextRequest) {
 
   const saveResult = () => {
     if (!fullContent) return;
-    const createdAt = new Date().toISOString();
     saveAnalysis({
       ticker: ticker.trim(),
       market: 'US',
@@ -83,10 +79,6 @@ export async function POST(request: NextRequest) {
       input_tokens,
       output_tokens,
     });
-    const filename = analysisFilename(ticker.trim(), createdAt);
-    mkdir(ANALYSES_DIR, { recursive: true })
-      .then(() => writeFile(path.join(ANALYSES_DIR, filename), fullContent, 'utf-8'))
-      .catch((e) => console.error('[CLI] .md 파일 저장 실패:', e));
   };
 
   const stream = new ReadableStream({

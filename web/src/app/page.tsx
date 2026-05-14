@@ -109,10 +109,13 @@ export default function Home() {
 
   const handleDownload = () => {
     if (!content || !mdFilename) return;
+    const blob = new Blob([content], { type: 'text/markdown; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = `/api/download?file=${encodeURIComponent(mdFilename)}`;
+    a.href = url;
     a.download = mdFilename;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
