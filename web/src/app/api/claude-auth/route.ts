@@ -11,42 +11,36 @@ interface Credentials {
   };
 }
 
-function readCredentials(): { loggedIn: boolean; accessToken: string | null; subscriptionType: string | null } {
+function readCredentials(): { loggedIn: boolean; subscriptionType: string | null } {
   try {
     const raw = readFileSync(join(homedir(), '.claude', '.credentials.json'), 'utf-8');
     const creds: Credentials = JSON.parse(raw);
     const oauth = creds?.claudeAiOauth;
-    if (!oauth?.accessToken) return { loggedIn: false, accessToken: null, subscriptionType: null };
+    if (!oauth?.accessToken) return { loggedIn: false, subscriptionType: null };
     const notExpired = !oauth.expiresAt || Date.now() < oauth.expiresAt;
-    return {
-      loggedIn: notExpired,
-      accessToken: notExpired ? oauth.accessToken : null,
-      subscriptionType: oauth.subscriptionType ?? null,
-    };
+    return { loggedIn: notExpired, subscriptionType: oauth.subscriptionType ?? null };
   } catch {
-    return { loggedIn: false, accessToken: null, subscriptionType: null };
+    return { loggedIn: false, subscriptionType: null };
   }
 }
 
-async function fetchAccountEmail(accessToken: string): Promise<string | null> {
-  const endpoints = [
-    'https://claude.ai/api/auth/current_account',
-    'https://claude.ai/api/organizations',
-  ];
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(4000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const email = data?.email ?? data?.user?.email
-        ?? (Array.isArray(data) ? (data[0]?.email ?? data[0]?.owner_email) : null);
-      if (email) return email;
-    } catch { /* try next */ }
-  }
-  return null;
+function runAuthStatus(): Promise<{ email: string | null; subscriptionType: string | null }> {
+  const { ANTHROPIC_API_KEY: _k, CLAUDECODE: _c, ...env } = process.env;
+  return new Promise((resolve) => {
+    const child = spawn('claude', ['auth', 'status', '--json'], { shell: true, env, windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d: Buffer) => (out += d.toString()));
+    child.on('close', () => {
+      try {
+        const parsed = JSON.parse(out.trim());
+        resolve({ email: parsed.email ?? null, subscriptionType: parsed.subscriptionType ?? null });
+      } catch {
+        resolve({ email: null, subscriptionType: null });
+      }
+    });
+    child.on('error', () => resolve({ email: null, subscriptionType: null }));
+    setTimeout(() => { child.kill(); resolve({ email: null, subscriptionType: null }); }, 5000);
+  });
 }
 
 function runVersion(): Promise<string | null> {
@@ -63,13 +57,11 @@ function runVersion(): Promise<string | null> {
 
 // GET /api/claude-auth — CLI 설치 및 OAuth 로그인 상태 조회
 export async function GET() {
-  const { loggedIn, accessToken, subscriptionType } = readCredentials();
-  const version = await runVersion();
+  const { loggedIn, subscriptionType: credSubType } = readCredentials();
+  const [version, authStatus] = await Promise.all([runVersion(), runAuthStatus()]);
 
-  let email: string | null = null;
-  if (loggedIn && accessToken) {
-    email = await fetchAccountEmail(accessToken);
-  }
+  const email = authStatus.email;
+  const subscriptionType = authStatus.subscriptionType ?? credSubType;
 
   return Response.json({
     available: !!version,
@@ -101,4 +93,15 @@ export async function POST() {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json({ ok: false, error: msg }, { status: 500 });
   }
+}
+
+// DELETE /api/claude-auth — claude logout 실행
+export async function DELETE() {
+  const { ANTHROPIC_API_KEY: _k, CLAUDECODE: _c, ...env } = process.env;
+  return new Promise<Response>((resolve) => {
+    const child = spawn('claude', ['logout'], { shell: true, env, windowsHide: true });
+    child.on('close', () => resolve(Response.json({ ok: true })));
+    child.on('error', (err) => resolve(Response.json({ ok: false, error: String(err) }, { status: 500 })));
+    setTimeout(() => { child.kill(); resolve(Response.json({ ok: true })); }, 6000);
+  });
 }

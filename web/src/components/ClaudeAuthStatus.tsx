@@ -54,6 +54,7 @@ export default function ClaudeAuthStatus({ onStatusChange, usageRefreshTrigger }
   const [info, setInfo] = useState<AuthInfo | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -104,6 +105,16 @@ export default function ClaudeAuthStatus({ onStatusChange, usageRefreshTrigger }
       setErrorMsg(String(e));
     }
     setIsLoggingIn(false);
+  };
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await fetch('/api/claude-auth', { method: 'DELETE' });
+      await checkStatus();
+    } finally {
+      setIsLoggingOut(false);
+    }
   };
 
   const closeModal = () => { setShowModal(false); setErrorMsg(''); };
@@ -211,7 +222,18 @@ export default function ClaudeAuthStatus({ onStatusChange, usageRefreshTrigger }
             disabled={isLoggingIn}
             className="w-full py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-400 text-white rounded-lg transition-colors"
           >
-            {isLoggingIn ? '터미널 창 여는 중...' : '🔑 Claude 로그인'}
+            {isLoggingIn ? '터미널 창 여는 중...' : '로그인'}
+          </button>
+        )}
+
+        {/* 로그아웃 버튼 */}
+        {status === 'logged-in' && (
+          <button
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="w-full py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 text-gray-600 dark:text-gray-300 rounded-lg transition-colors border border-gray-200 dark:border-gray-600"
+          >
+            {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
           </button>
         )}
       </div>
