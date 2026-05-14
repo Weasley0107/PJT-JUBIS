@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# JUBIS — AI 주식 분석 에이전트
 
-## Getting Started
+Claude CLI를 활용한 주식 종합 분석 웹 애플리케이션입니다.  
+티커를 입력하면 실시간 캔들차트와 함께 10개 섹션의 심층 분석 리포트를 스트리밍으로 제공합니다.
 
-First, run the development server:
+---
+
+## 주요 기능
+
+| 기능 | 설명 |
+|---|---|
+| **실시간 캔들차트** | Yahoo Finance 데이터 기반 OHLCV 차트 + MA 5/20/60/120/200일선 |
+| **AI 종합 분석** | Claude가 10개 섹션(기술적 분석, 재무제표, 밸류에이션, 뉴스 등) 리포트 생성 |
+| **스트리밍 출력** | 분석 결과를 실시간으로 스트리밍 렌더링 |
+| **분석 기간 선택** | 3개월 / 6개월 / 1년 / 2년 / 3년 |
+| **기술적 분석 레벨** | 기본 / 표준(MACD+RSI) / 고급(볼린저+피보나치+VWAP) |
+| **히스토리** | 분석 이력 저장 및 재열람 |
+| **MD 다운로드** | 분석 리포트를 마크다운 파일로 저장 |
+| **다크모드** | 라이트/다크 테마 전환 |
+
+---
+
+## 기술 스택
+
+- **Framework**: Next.js 16 (App Router, Turbopack)
+- **AI**: Claude CLI (`analyze-cli` 스트리밍)
+- **차트**: [lightweight-charts](https://github.com/tradingview/lightweight-charts) v5 (TradingView)
+- **주가 데이터**: [yahoo-finance2](https://github.com/gadicc/yahoo-finance2) v3
+- **UI**: Tailwind CSS, Recharts (재무 차트)
+- **DB**: SQLite (분석 히스토리)
+
+---
+
+## 시작하기
+
+### 필수 조건
+
+- Node.js 18+
+- Claude CLI 설치 및 로그인 (`claude login`)
+
+### 설치 및 실행
 
 ```bash
+cd web
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+브라우저에서 [http://localhost:3000](http://localhost:3000) 접속
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 환경 변수
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`.env.local` 파일 생성:
 
-## Learn More
+```env
+# Claude CLI 경로 (기본값으로 자동 감지)
+# CLAUDE_CLI_PATH=/usr/local/bin/claude
+```
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 화면 구성
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+┌─────────────────┬──────────────────────────────────┐
+│  사이드바       │  상단바 (티커 / 분석 상태)        │
+│  - 종목 입력    ├──────────────────────────────────┤
+│  - 기간 선택    │  캔들차트 (MA 5/20/60/120/200)   │
+│  - 기술적 분석  ├──────────────────────────────────┤
+│  - Claude 상태  │                                  │
+│  - 히스토리     │  AI 분석 리포트 (스트리밍)        │
+└─────────────────┴──────────────────────────────────┘
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 분석 섹션 구성
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. 종목 기본 정보
+2. 주가 동향 및 수급 분석
+3. 기술적 분석 (이동평균 / MACD / RSI / 볼린저밴드)
+4. 밸류에이션 지표 (PER / PBR / ROE / EV/EBITDA)
+5. 3개년 재무제표 분석
+6. 최근 분기 실적 발표
+7. 산업 분석 및 경쟁 환경
+8. 최신 뉴스 및 애널리스트 의견
+9. 투자 강점 & 리스크 (Bull/Bear Case)
+10. 투자 전략별 종합 평가 및 스코어카드
+
+---
+
+> 본 애플리케이션은 정보 제공 목적이며 투자 권유가 아닙니다.
