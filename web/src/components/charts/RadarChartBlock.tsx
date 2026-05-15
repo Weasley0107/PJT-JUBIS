@@ -16,7 +16,8 @@ interface Props {
 }
 
 export default function RadarChartBlock({ chart }: Props) {
-  const max = chart.max ?? Math.max(...chart.data.map((d) => Number(d.value) || 0), 1);
+  const rawMax = chart.max ?? Math.max(...chart.data.map((d) => Number(d.value) || 0), 1);
+  const max = Number.isInteger(rawMax) ? rawMax : Math.ceil(rawMax);
 
   return (
     <div className="my-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
@@ -35,6 +36,7 @@ export default function RadarChartBlock({ chart }: Props) {
             domain={[0, max]}
             tick={{ fontSize: 9, fill: '#9ca3af' }}
             tickCount={max <= 5 ? max + 1 : 6}
+            allowDecimals={false}
           />
           <Radar
             name={chart.title}

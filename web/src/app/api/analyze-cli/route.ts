@@ -3,22 +3,24 @@ import { NextRequest } from 'next/server';
 import { buildPrompt, type PeriodCode, type TechnicalLevel } from '@/lib/prompt';
 import { saveAnalysis } from '@/lib/db';
 
-function detectStderrError(stderr: string): string | null {
+const TOKEN_EXHAUSTED_MARKER = '__TOKEN_EXHAUSTED__';
+
+function detectStderrError(stderr: string): { message: string; tokenExhausted: boolean } | null {
   const s = stderr.toLowerCase();
   if (s.includes('credit') || s.includes('balance') || s.includes('billing') || s.includes('payment')) {
-    return '**토큰/크레딧이 부족합니다.** Claude 계정의 사용량 또는 결제 정보를 확인하세요.';
+    return { message: '**토큰/크레딧이 부족합니다.** Claude 계정의 사용량 또는 결제 정보를 확인하세요.', tokenExhausted: false };
   }
   if (s.includes('rate_limit') || s.includes('rate limit') || s.includes('too many request')) {
-    return '**요청 한도(Rate Limit)를 초과했습니다.** 잠시 후 다시 시도하세요.';
+    return { message: '**요청 한도(Rate Limit)를 초과했습니다.** 잠시 후 다시 시도하세요.', tokenExhausted: false };
   }
   if (s.includes('overloaded')) {
-    return '**Claude 서버가 과부하 상태입니다.** 잠시 후 다시 시도하세요.';
+    return { message: '**Claude 서버가 과부하 상태입니다.** 잠시 후 다시 시도하세요.', tokenExhausted: false };
   }
   if ((s.includes('token') || s.includes('usage')) && (s.includes('limit') || s.includes('exceed') || s.includes('quota'))) {
-    return '**토큰 한도를 초과했습니다.** 구독 플랜의 사용량을 확인하세요.';
+    return { message: '**토큰 한도를 초과했습니다.** 구독 플랜의 사용량을 확인하세요.', tokenExhausted: true };
   }
   if (s.includes('unauthorized') || s.includes('401') || s.includes('not logged in') || s.includes('login')) {
-    return '**인증 오류입니다.** `claude login` 명령으로 다시 로그인하세요.';
+    return { message: '**인증 오류입니다.** `claude login` 명령으로 다시 로그인하세요.', tokenExhausted: false };
   }
   return null;
 }
@@ -185,7 +187,14 @@ export async function POST(request: NextRequest) {
           const stderrTail = stderrBuffer.trim().slice(-500);
           const knownError = detectStderrError(stderrTail);
           if (knownError) {
-            safeEnqueue(`\n\n> ${knownError}`);
+            if (knownError.tokenExhausted) {
+              // 토큰 소진: 특수 마커로 프론트에 모달 트리거 전달
+              const resetHour = new Date();
+              resetHour.setHours(resetHour.getHours() + 5, 0, 0, 0);
+              safeEnqueue(`\n\n${TOKEN_EXHAUSTED_MARKER}:${resetHour.toISOString()}`);
+            } else {
+              safeEnqueue(`\n\n> ${knownError.message}`);
+            }
           } else {
             safeEnqueue(
               `\n\n> **오류**: Claude CLI 실행 실패 (exit code ${code}).\n` +

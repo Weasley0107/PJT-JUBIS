@@ -2,16 +2,24 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import AnalysisForm, { type AnalysisParams } from '@/components/AnalysisForm';
 import StreamingOutput from '@/components/StreamingOutput';
 import HistoryPanel from '@/components/HistoryPanel';
 import ThemeToggle from '@/components/ThemeToggle';
 import ClaudeAuthStatus from '@/components/ClaudeAuthStatus';
+import TokenExhaustedModal from '@/components/TokenExhaustedModal';
+import GuidePanel from '@/components/GuidePanel';
 import type { ChartDataPayload } from '@/components/charts/CandlestickChart';
+
+const TOKEN_EXHAUSTED_MARKER = '__TOKEN_EXHAUSTED__';
 
 const CandlestickChart = dynamic(() => import('@/components/charts/CandlestickChart'), { ssr: false });
 
 export default function Home() {
+  const router = useRouter();
+  const [loggedInUser, setLoggedInUser] = useState<string>('');
   const [content, setContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentTicker, setCurrentTicker] = useState('');
@@ -22,8 +30,22 @@ export default function Home() {
   const [chartData, setChartData] = useState<ChartDataPayload | null>(null);
   const [progress, setProgress] = useState(0);
   const [elapsedSecs, setElapsedSecs] = useState(0);
+  const [tokenExhaustedTime, setTokenExhaustedTime] = useState<Date | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   const streamStartRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.username) setLoggedInUser(d.username); })
+      .catch(() => null);
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    router.push('/login');
+  };
 
   useEffect(() => {
     if (!isStreaming) {
@@ -79,11 +101,29 @@ export default function Home() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        setContent((prev) => prev + decoder.decode(value, { stream: true }));
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // 토큰 소진 마커 감지
+        const markerIdx = buffer.indexOf(TOKEN_EXHAUSTED_MARKER);
+        if (markerIdx !== -1) {
+          const beforeMarker = buffer.slice(0, markerIdx);
+          const afterMarker = buffer.slice(markerIdx + TOKEN_EXHAUSTED_MARKER.length + 1); // +1 for ':'
+          if (beforeMarker) setContent((prev) => prev + beforeMarker);
+
+          const resetTime = new Date(afterMarker.trim());
+          setTokenExhaustedTime(Number.isNaN(resetTime.getTime()) ? new Date(Date.now() + 5 * 60 * 60 * 1000) : resetTime);
+          reader.cancel();
+          break;
+        }
+
+        setContent((prev) => prev + chunk);
+        buffer = '';
       }
 
       setHistoryRefresh((n) => n + 1);
@@ -103,6 +143,17 @@ export default function Home() {
 
   const handleStop = () => {
     abortControllerRef.current?.abort();
+  };
+
+  const handleTokenExhaustedLater = () => {
+    setTokenExhaustedTime(null);
+    setHistoryRefresh((n) => n + 1);
+  };
+
+  const handleTokenExhaustedChangeAccount = async () => {
+    setTokenExhaustedTime(null);
+    await fetch('/api/auth/logout', { method: 'POST' });
+    router.push('/login');
   };
 
   const handleHistorySelect = async (id: number, createdAt: string) => {
@@ -139,6 +190,13 @@ export default function Home() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white overflow-hidden transition-colors">
+      {tokenExhaustedTime && (
+        <TokenExhaustedModal
+          resetTime={tokenExhaustedTime}
+          onLater={handleTokenExhaustedLater}
+          onChangeAccount={handleTokenExhaustedChangeAccount}
+        />
+      )}
 
       {/* 사이드바 */}
       <aside className="w-72 flex-shrink-0 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-colors">
@@ -146,13 +204,30 @@ export default function Home() {
         {/* 헤더 */}
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center justify-between mb-0.5">
-            <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setContent(''); setCurrentTicker(''); setSelectedHistoryId(null); setChartData(null); }}
+              className="flex items-center gap-2 hover:opacity-75 transition-opacity"
+            >
               <span className="text-xl">📈</span>
               <h1 className="font-bold text-gray-900 dark:text-white text-lg">JUBIS</h1>
-            </div>
+            </button>
             <ThemeToggle />
           </div>
-          <p className="text-xs text-gray-400 dark:text-gray-500">AI 주식 분석 에이전트</p>
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-xs text-gray-400 dark:text-gray-500">AI 주식 분석 에이전트</p>
+            {loggedInUser && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 dark:text-gray-400">{loggedInUser}</span>
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 transition-colors"
+                  title="로그아웃"
+                >
+                  로그아웃
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 분석 폼 */}
@@ -163,6 +238,24 @@ export default function Home() {
         {/* CLI 로그인 상태 */}
         <div className="px-4 pt-3 pb-2 border-b border-gray-200 dark:border-gray-800">
           <ClaudeAuthStatus usageRefreshTrigger={usageRefreshTrigger} />
+        </div>
+
+        {/* 가이드 토글 버튼 */}
+        <div className="px-4 pb-2">
+          <button
+            onClick={() => setShowGuide((v) => !v)}
+            className={`flex items-center gap-2 w-full px-3 py-2 text-xs rounded-lg transition-colors ${
+              showGuide
+                ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
+                : 'text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800/50'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            주식 가이드 (용어·차트 읽기)
+            {showGuide && <span className="ml-auto text-[9px] px-1 py-0.5 bg-blue-500 text-white rounded">열림</span>}
+          </button>
         </div>
 
         {/* 히스토리 */}
@@ -187,8 +280,9 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* 메인 영역 */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      {/* 메인 영역 — 분석 + 가이드 패널 */}
+      <div className="flex-1 flex overflow-hidden">
+      <main className={`flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${showGuide ? 'w-1/2' : 'flex-1'}`}>
 
         {/* 상단 바 */}
         <div className="relative flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/50 backdrop-blur-sm flex-shrink-0 transition-colors">
@@ -260,6 +354,16 @@ export default function Home() {
           <StreamingOutput content={content} isStreaming={isStreaming} />
         </div>
       </main>
+
+      {/* 가이드 패널 */}
+      <div
+        className={`flex flex-col overflow-hidden border-l border-gray-200 dark:border-gray-800 transition-all duration-300 ease-in-out ${
+          showGuide ? 'w-1/2' : 'w-0'
+        }`}
+      >
+        {showGuide && <GuidePanel onClose={() => setShowGuide(false)} />}
+      </div>
+      </div>
     </div>
   );
 }

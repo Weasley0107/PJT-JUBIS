@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import bcrypt from 'bcryptjs';
 
 const DB_PATH = path.join(process.cwd(), 'stock_analyses.db');
 
@@ -24,10 +25,26 @@ function getDb(): Database.Database {
         created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT    NOT NULL UNIQUE,
+        password_hash TEXT    NOT NULL,
+        role          TEXT    NOT NULL DEFAULT 'user',
+        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
     // 기존 DB 마이그레이션
     try { db.exec(`ALTER TABLE analyses ADD COLUMN mode TEXT NOT NULL DEFAULT 'api'`); } catch { /* already exists */ }
     try { db.exec(`ALTER TABLE analyses ADD COLUMN input_tokens INTEGER DEFAULT 0`); } catch { /* already exists */ }
     try { db.exec(`ALTER TABLE analyses ADD COLUMN output_tokens INTEGER DEFAULT 0`); } catch { /* already exists */ }
+
+    // 관리자 계정 시드 (없을 때만)
+    const admin = db.prepare('SELECT id FROM users WHERE username = ?').get('weasley');
+    if (!admin) {
+      const hash = bcrypt.hashSync('weasley', 10);
+      db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run('weasley', hash, 'admin');
+    }
   }
   return db;
 }
@@ -102,4 +119,17 @@ export function getAnalysisById(id: number): Analysis | undefined {
 export function deleteAnalysis(id: number): void {
   const db = getDb();
   db.prepare('DELETE FROM analyses WHERE id = ?').run(id);
+}
+
+export interface User {
+  id: number;
+  username: string;
+  password_hash: string;
+  role: string;
+  created_at: string;
+}
+
+export function getUserByUsername(username: string): User | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
 }

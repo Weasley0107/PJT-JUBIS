@@ -72,10 +72,11 @@ export default function StreamingOutput({ content, isStreaming }: Props) {
             if (chart.type === 'bar') return <BarChartBlock key={i} chart={chart} />;
             if (chart.type === 'radar') return <RadarChartBlock key={i} chart={chart} />;
           }
+          const sanitized = block.content.replace(/~~([\s\S]+?)~~/g, '$1');
           return (
             <div key={i} className={PROSE}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {block.content}
+                {sanitized}
               </ReactMarkdown>
               {isStreaming && i === blocks.length - 1 && (
                 <span className="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-pulse" />
