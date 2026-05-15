@@ -18,6 +18,34 @@ function calcMA(values: number[], period: number): (number | null)[] {
   });
 }
 
+// Wilder's smoothing RSI — closes 배열 길이만큼 결과 반환, 첫 period개는 null
+function calcRSI(closes: number[], period: number = 14): (number | null)[] {
+  const result: (number | null)[] = [];
+  if (closes.length < period + 1) return new Array(closes.length).fill(null);
+
+  const gains: number[] = [];
+  const losses: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    gains.push(d > 0 ? d : 0);
+    losses.push(d < 0 ? -d : 0);
+  }
+
+  for (let i = 0; i < period; i++) result.push(null);
+
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+
+  for (let i = period; i < gains.length; i++) {
+    avgGain = (avgGain * (period - 1) + gains[i]) / period;
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  }
+
+  return result;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const ticker = searchParams.get('ticker')?.toUpperCase() ?? '';
@@ -49,6 +77,7 @@ export async function GET(req: NextRequest) {
     const ma60  = calcMA(closes, 60);
     const ma120 = calcMA(closes, 120);
     const ma200 = calcMA(closes, 200);
+    const rsi14 = calcRSI(closes, 14);
 
     const displayStart = new Date();
     displayStart.setDate(displayStart.getDate() - displayDays);
@@ -58,11 +87,12 @@ export async function GET(req: NextRequest) {
     const toDateStr = (d: string | Date) => new Date(d).toISOString().slice(0, 10);
 
     const candles = quotes.slice(from).map((q) => ({
-      time: toDateStr(q.date),
-      open:  q.open,
-      high:  q.high,
-      low:   q.low,
-      close: q.close,
+      time:   toDateStr(q.date),
+      open:   q.open,
+      high:   q.high,
+      low:    q.low,
+      close:  q.close,
+      volume: q.volume ?? 0,
     }));
 
     const makeMALine = (arr: (number | null)[]) =>
@@ -71,6 +101,13 @@ export async function GET(req: NextRequest) {
           ? { time: toDateStr(quotes[from + i].date), value: +v.toFixed(4) }
           : null)
         .filter((x): x is { time: string; value: number } => x !== null);
+
+    const rsiLine = rsi14
+      .slice(from)
+      .map((v, i) => v !== null
+        ? { time: toDateStr(quotes[from + i].date), value: +v.toFixed(2) }
+        : null)
+      .filter((x): x is { time: string; value: number } => x !== null);
 
     return NextResponse.json({
       candles,
@@ -81,6 +118,7 @@ export async function GET(req: NextRequest) {
         ma120: makeMALine(ma120),
         ma200: makeMALine(ma200),
       },
+      rsiLine,
     });
   } catch (err) {
     console.error('[chart-data]', err);

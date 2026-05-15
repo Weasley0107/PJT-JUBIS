@@ -6,9 +6,9 @@ const PERIOD_LABELS: Record<PeriodCode, string> = {
 };
 
 const TECHNICAL_LABELS: Record<TechnicalLevel, string> = {
-  basic: '기본 (이동평균선)',
-  standard: '표준 (이동평균+MACD+RSI)',
-  advanced: '고급 (표준+볼린저+피보나치+거래량)',
+  basic: '기본 (이동평균선+지지저항)',
+  standard: '표준 (이동평균+MACD+RSI+ADX)',
+  advanced: '고급 (표준+볼린저+피보나치+ADX+ATR)',
 };
 
 export function buildPrompt(params: {
@@ -21,11 +21,13 @@ export function buildPrompt(params: {
 
   const advancedNote =
     technical === 'advanced'
-      ? '기술적 분석에 피보나치 되돌림, VWAP, 스토캐스틱도 추가해줘.'
+      ? '기술적 분석에 피보나치 되돌림, VWAP, 스토캐스틱도 추가해줘. ATR로 박스권 변동폭을 수치화하고, 박스 상단/하단 돌파 시나리오(목표가·손절가)도 제시해줘.'
       : technical === 'basic'
-      ? '기술적 분석은 20/60/120일 이동평균선과 지지·저항선만 포함해줘.'
+      ? '기술적 분석은 20/60/120일 이동평균선과 지지·저항선만 포함해줘. ADX는 생략해도 좋아.'
       : '';
 
+  // compare가 있을 때만 프롬프트에 지시문 삽입 — 섹션 7 경쟁사 비교표가 추가됨
+  // 없으면 빈 문자열이라 템플릿 리터럴에서 줄 하나만 추가됨(무해)
   const compareNote =
     compare.trim()
       ? `비교 분석 대상: ${compare} — 섹션 7 산업 분석에서 경쟁사 비교표를 추가해줘.`
@@ -65,6 +67,11 @@ ${compareNote}
 - RSI(14일): 현재값, 상태 판단
 - 볼린저밴드 위치
 - 지지·저항 구간
+- ADX(14일): 현재값과 추세 강도 판단
+  - ADX < 20: 추세 없음 → **박스권/횡보 구간** (상단·하단 가격 명시)
+  - ADX 20~25: 추세 형성 초기
+  - ADX > 25: 추세 진행 중 (상승/하락 방향 명시)
+- **현재 국면 판단: 박스권 횡보 / 상승 추세 / 하락 추세** — 위 지표 종합 근거 서술
 - **기술적 종합 판단: 매수 / 관망 / 매도**
 
 ## 섹션 4. 밸류에이션 지표

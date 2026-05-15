@@ -7,6 +7,7 @@ export interface AnalysisParams {
   ticker: string;
   period: '3m' | '6m' | '1y' | '2y' | '3y';
   technical: 'basic' | 'standard' | 'advanced';
+  // 쉼표로 구분된 비교 종목 티커 문자열 (예: "AMD, TSM"). 비어있으면 비교표 미포함
   compare: string;
 }
 
@@ -19,8 +20,12 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
   const [ticker, setTicker] = useState('');
   const [period, setPeriod] = useState<AnalysisParams['period']>('6m');
   const [technical, setTechnical] = useState<AnalysisParams['technical']>('standard');
+  // 비교 종목은 기본 숨김 — 고급 옵션으로 분류해 폼이 단순해 보이게 함
   const [compare, setCompare] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [peersLoading, setPeersLoading] = useState(false);
+  // 자동 추천으로 채워진 상태인지 구분 — 수동 수정 시 뱃지 숨김
+  const [autoFilled, setAutoFilled] = useState(false);
 
   // 자동완성
   const [suggestions, setSuggestions] = useState<TickerResult[]>([]);
@@ -59,10 +64,29 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
     searchTicker(val);
   };
 
+  const fetchPeers = async (symbol: string) => {
+    setPeersLoading(true);
+    setAutoFilled(false);
+    try {
+      const res = await fetch(`/api/peers?ticker=${encodeURIComponent(symbol)}`);
+      const peers: string[] = await res.json();
+      if (peers.length > 0) {
+        setCompare(peers.join(', '));
+        setAutoFilled(true);
+        setShowAdvanced(true); // 자동 추천 시 섹션 자동 열기
+      }
+    } catch {
+      // 실패해도 사용자가 직접 입력할 수 있으므로 무시
+    } finally {
+      setPeersLoading(false);
+    }
+  };
+
   const handleSelect = (item: TickerResult) => {
     setTicker(item.symbol);
     setSuggestions([]);
     setShowSuggestions(false);
+    fetchPeers(item.symbol);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -167,7 +191,7 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
         </div>
       </div>
 
-      {/* 비교 종목 토글 */}
+      {/* 비교 종목 토글 — 입력 시 Claude 프롬프트 섹션 7(산업 분석)에 경쟁사 비교표가 추가됨 */}
       <button
         type="button"
         onClick={() => setShowAdvanced(!showAdvanced)}
@@ -179,12 +203,25 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
       {showAdvanced && (
         <div>
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-            비교 종목 <span className="text-gray-400">(쉼표 구분)</span>
+            비교 종목{' '}
+            <span className="text-gray-400">(쉼표 구분)</span>
+            {peersLoading && (
+              <span className="ml-1.5 inline-flex items-center gap-1 text-blue-400">
+                <span className="w-2.5 h-2.5 border border-blue-400 border-t-transparent rounded-full animate-spin inline-block" />
+                추천 중...
+              </span>
+            )}
+            {autoFilled && !peersLoading && (
+              <span className="ml-1.5 text-[10px] bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-full">
+                자동 추천
+              </span>
+            )}
           </label>
+          {/* 자동완성 없이 자유 입력 — 여러 종목을 빠르게 넣으려면 검색 UX가 오히려 불편함 */}
           <input
             type="text"
             value={compare}
-            onChange={(e) => setCompare(e.target.value)}
+            onChange={(e) => { setCompare(e.target.value); setAutoFilled(false); }}
             placeholder="AMD, TSM"
             className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500 text-sm transition-colors"
             disabled={isLoading}
