@@ -8,14 +8,20 @@ const TERMS = [
   { term: '종가 (Close)',   desc: '장 마감 시 마지막 체결 가격' },
   { term: '고가 (High)',    desc: '해당 기간 중 가장 높은 거래 가격' },
   { term: '저가 (Low)',     desc: '해당 기간 중 가장 낮은 거래 가격' },
+  { term: 'MA 5',          desc: '5일 이동평균. 초단기 추세. 데이트레이딩·스캘핑 활용' },
+  { term: 'MA 20',         desc: '20일(약 1개월) 이동평균. 단기 추세선. 가장 많이 참조' },
+  { term: 'MA 60',         desc: '60일(약 3개월) 이동평균. 중기 추세선' },
+  { term: 'MA 120',        desc: '120일(약 6개월) 이동평균. 장기 추세선. 국내 투자자 선호' },
+  { term: 'MA 200',        desc: '200일(약 1년) 이동평균. 초장기 추세. 이 위면 강세장, 아래면 약세장으로 판단' },
+  { term: '볼린저밴드 (BB)', desc: 'MA20 ± 2×표준편차로 그린 두 밴드. 밴드 폭이 좁아지면 (스퀴즈) 곧 방향성 이탈 예고. 상단 접근 시 과매수, 하단 접근 시 과매도 신호' },
+  { term: '골든크로스',      desc: '단기 MA가 장기 MA를 상향 돌파 → 매수 신호' },
+  { term: '데드크로스',      desc: '단기 MA가 장기 MA를 하향 돌파 → 매도 신호' },
   { term: '시가총액',        desc: '주가 × 발행 주식 수. 기업의 시장 가치' },
   { term: 'PER',           desc: '주가수익비율. 주가 ÷ EPS. 낮을수록 상대적 저평가' },
   { term: 'PBR',           desc: '주가순자산비율. 주가 ÷ BPS. 1 미만이면 청산가치 이하' },
   { term: 'ROE',           desc: '자기자본이익률. 순이익 ÷ 자기자본 × 100 (%)' },
   { term: 'EPS',           desc: '주당순이익. 당기순이익 ÷ 발행 주식 수' },
   { term: '배당수익률',      desc: '연간 배당 ÷ 주가 × 100 (%). 높을수록 수익 안정' },
-  { term: '골든크로스',      desc: '단기 MA가 장기 MA를 상향 돌파 → 매수 신호' },
-  { term: '데드크로스',      desc: '단기 MA가 장기 MA를 하향 돌파 → 매도 신호' },
   { term: '상한가/하한가',   desc: '당일 허용 최대 상승(+30%) / 하락(-30%) 가격' },
   { term: '공매도',          desc: '주식을 빌려 매도, 하락 후 되사 차익을 얻는 전략' },
   { term: '호가창',          desc: '매수·매도 주문이 쌓인 가격대 목록 (오더북)' },
@@ -248,10 +254,11 @@ function MAChartSection() {
       </Card>
       <div className="grid grid-cols-2 gap-2">
         {[
-          { color: '#3b82f6',  ma: 'MA 5',   period: '5일',       desc: '초단기 / 데이트레이딩' },
-          { color: '#f59e0b',  ma: 'MA 20',  period: '20일 (1개월)', desc: '단기 추세' },
+          { color: '#3b82f6',  ma: 'MA 5',   period: '5일',         desc: '초단기 / 데이트레이딩' },
+          { color: '#f59e0b',  ma: 'MA 20',  period: '20일 (1개월)', desc: '단기 추세 (BB 기준선)' },
           { color: '#a855f7',  ma: 'MA 60',  period: '60일 (3개월)', desc: '중기 추세' },
           { color: '#10b981',  ma: 'MA 120', period: '120일 (6개월)', desc: '장기 추세' },
+          { color: '#ef4444',  ma: 'MA 200', period: '200일 (약 1년)', desc: '초장기 / 강세·약세장 기준' },
         ].map(({ color, ma, period, desc }) => (
           <div key={ma} className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-2.5">
             <div className="flex items-center gap-1.5 mb-1">
@@ -598,9 +605,135 @@ function TermsSection() {
 }
 
 /* ════════════════════════════════════
+   Section 07 — 볼린저밴드
+════════════════════════════════════ */
+const BB_UPPER = [[0,28],[60,32],[120,46],[160,50],[200,50],[240,38],[280,22],[330,10],[380,6]];
+const BB_MID   = [[0,55],[60,56],[120,58],[160,57],[200,56],[240,48],[280,38],[330,25],[380,18]];
+const BB_LOWER = [[0,82],[60,80],[120,70],[160,65],[200,64],[240,62],[280,54],[330,40],[380,30]];
+const BB_PRICE = [[0,52],[40,48],[80,58],[120,55],[160,54],[190,52],[220,46],[250,37],[275,26],[300,14],[330,6],[360,3],[380,3]];
+
+function BBSection() {
+  const upperPath = toPath(BB_UPPER);
+  const midPath   = toPath(BB_MID);
+  const lowerPath = toPath(BB_LOWER);
+  const pricePath = toPath(BB_PRICE);
+  const fillPath  =
+    BB_UPPER.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x},${y}`).join(' ') + ' ' +
+    [...BB_LOWER].reverse().map(([x, y]) => `L${x},${y}`).join(' ') + ' Z';
+
+  return (
+    <section className="space-y-4">
+      <SectionTitle number="07" title="볼린저밴드 (BB)" />
+      <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+        주가가 <strong className="text-gray-900 dark:text-white">"정상 범위"를 벗어났는지</strong> 판단하는 변동성 지표입니다.
+        MA20을 중심으로 ±2 표준편차 거리에 두 밴드를 그리며,
+        통계적으로 주가는 <strong className="text-gray-900 dark:text-white">95% 확률</strong>로 이 밴드 안에 머뭅니다.
+      </p>
+
+      {/* 핵심 해석 2가지 */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-2.5">
+          <p className="text-[11px] font-bold text-blue-700 dark:text-blue-300 mb-1">① 밴드 폭 → 변동성</p>
+          <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-snug">
+            <span className="font-medium text-gray-800 dark:text-gray-200">좁아질수록 (스퀴즈)</span> → 시장이 조용함 → 곧 큰 움직임 예고<br />
+            <span className="font-medium text-gray-800 dark:text-gray-200">넓어질수록</span> → 현재 변동성이 큰 상태
+          </p>
+        </div>
+        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2.5">
+          <p className="text-[11px] font-bold text-amber-700 dark:text-amber-300 mb-1">② 가격 위치 → 과열/침체</p>
+          <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-snug">
+            <span className="font-medium text-gray-800 dark:text-gray-200">상단 터치</span> → "지금 비싼 편" → 과매수 가능성<br />
+            <span className="font-medium text-gray-800 dark:text-gray-200">하단 터치</span> → "지금 싼 편" → 과매도 가능성
+          </p>
+        </div>
+      </div>
+
+      <Card>
+        <p className="text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-2">볼린저밴드 구조 예시</p>
+        <svg viewBox="0 0 390 108" className="w-full">
+          {[30, 57, 82].map(y => (
+            <line key={y} x1={0} y1={y} x2={390} y2={y} className="stroke-gray-100 dark:stroke-gray-800" strokeWidth="0.5" />
+          ))}
+          {/* 스퀴즈 구간 */}
+          <rect x={120} y={0} width={90} height={100} fill="#a855f710" rx="2" />
+          {/* 채움 */}
+          <path d={fillPath} fill="rgba(147,197,253,0.12)" stroke="none" />
+          {/* 하단 BB */}
+          <path d={lowerPath} fill="none" stroke="#93c5fd" strokeWidth="1.2" strokeDasharray="4,2" />
+          {/* 상단 BB */}
+          <path d={upperPath} fill="none" stroke="#93c5fd" strokeWidth="1.2" strokeDasharray="4,2" />
+          {/* 중단 (MA20) */}
+          <path d={midPath} fill="none" stroke="#f59e0b" strokeWidth="1.2" opacity={0.7} />
+          {/* 주가 */}
+          <path d={pricePath} fill="none" stroke="#6b7280" strokeWidth="1.3" />
+          {/* 스퀴즈 라벨 */}
+          <text x={165} y={104} fontSize="7" textAnchor="middle" fill="#a855f7" fontWeight="600">스퀴즈</text>
+          <line x1={165} y1={47} x2={165} y2={98} stroke="#a855f7" strokeWidth="0.7" strokeDasharray="2,2" />
+          {/* 상단 돌파 마커 */}
+          <circle cx={300} cy={14} r={4} fill="none" stroke="#ef4444" strokeWidth="1.2" />
+          <line x1={304} y1={10} x2={332} y2={2} stroke="#9ca3af" strokeWidth="0.6" />
+          <text x={334} y={4} fontSize="7" fill="#ef4444" fontWeight="600">상단 돌파</text>
+          {/* 범례 */}
+          <g transform="translate(0,100)">
+            <line x1={0} y1={0} x2={12} y2={0} stroke="#93c5fd" strokeWidth="1.2" strokeDasharray="4,2" />
+            <text x={15} y={3} fontSize="7" className="fill-gray-500 dark:fill-gray-400">상/하단 BB</text>
+            <line x1={78} y1={0} x2={90} y2={0} stroke="#f59e0b" strokeWidth="1.2" />
+            <text x={93} y={3} fontSize="7" className="fill-gray-500 dark:fill-gray-400">중단(MA20)</text>
+            <line x1={158} y1={0} x2={170} y2={0} stroke="#6b7280" strokeWidth="1.2" />
+            <text x={173} y={3} fontSize="7" className="fill-gray-500 dark:fill-gray-400">주가</text>
+          </g>
+        </svg>
+      </Card>
+
+      {/* 구성 요소 */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { color: '#93c5fd', label: '상단 밴드', formula: 'MA20 + 2σ', desc: '과매수 기준. 접촉 시 저항 가능성' },
+          { color: '#f59e0b', label: '중단 밴드', formula: 'MA20',       desc: '기준 이동평균선. 추세 방향 확인' },
+          { color: '#93c5fd', label: '하단 밴드', formula: 'MA20 − 2σ', desc: '과매도 기준. 접촉 시 지지 가능성' },
+        ].map(({ color, label, formula, desc }) => (
+          <div key={label} className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-2.5 text-center">
+            <div className="w-8 h-0.5 mx-auto mb-1.5 rounded" style={{ background: color }} />
+            <p className="text-[11px] font-bold text-gray-800 dark:text-gray-200">{label}</p>
+            <p className="text-[10px] font-mono text-blue-500 my-0.5">{formula}</p>
+            <p className="text-[9px] text-gray-500 dark:text-gray-400 leading-snug">{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 신호 해석 */}
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { icon: '⟺', title: '스퀴즈', color: '#a855f7', desc: '밴드가 좁아짐. 변동성 수축 → 곧 큰 방향성 이탈 예고' },
+          { icon: '↔',  title: '밴드 확장', color: '#3b82f6', desc: '밴드가 넓어짐. 현재 추세가 강하게 진행 중' },
+          { icon: '▲',  title: '상단 터치/돌파', color: '#ef4444', desc: '과매수 구간. 단기 조정 가능성. 강한 추세면 상단을 타고 상승 지속' },
+          { icon: '▼',  title: '하단 터치/돌파', color: '#10b981', desc: '과매도 구간. 단기 반등 가능성. 약한 추세면 하단 따라 하락 지속' },
+        ].map(({ icon, title, color, desc }) => (
+          <div key={title} className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-xs font-bold" style={{ color }}>{icon}</span>
+              <p className="text-[11px] font-semibold" style={{ color }}>{title}</p>
+            </div>
+            <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-snug">{desc}</p>
+          </div>
+        ))}
+      </div>
+      <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-2.5">
+        <p className="text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">주의할 점</p>
+        <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-relaxed">
+          강한 <strong className="text-gray-700 dark:text-gray-200">상승 추세</strong> 중에는 주가가 상단 밴드를 따라 계속 위로 이동합니다.
+          "상단에 닿았으니 떨어지겠지"가 아니라, <strong className="text-gray-700 dark:text-gray-200">추세 방향 확인이 먼저</strong>입니다.
+          RSI와 함께 보는 것을 권장합니다.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/* ════════════════════════════════════
    Panel Root
 ════════════════════════════════════ */
-const SECTIONS = ['01 캔들차트', '02 이동평균선', '03 RSI', '04 거래량', '05 차트패턴', '06 용어'];
+const SECTIONS = ['01 캔들차트', '02 이동평균선', '03 RSI', '04 거래량', '05 차트패턴', '06 용어', '07 볼린저밴드'];
 
 export default function GuidePanel({ onClose }: Props) {
   return (
@@ -648,6 +781,7 @@ export default function GuidePanel({ onClose }: Props) {
           <div id="guide-sec-04"><VolumeSection /></div>
           <div id="guide-sec-05"><ChartPatternsSection /></div>
           <div id="guide-sec-06"><TermsSection /></div>
+          <div id="guide-sec-07"><BBSection /></div>
           <p className="text-[10px] text-gray-400 dark:text-gray-600 text-center pb-4">
             투자 판단의 참고 자료이며, 투자 손익의 책임은 본인에게 있습니다.
           </p>

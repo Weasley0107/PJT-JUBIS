@@ -18,6 +18,7 @@ export interface ChartDataPayload {
     ma120: MAPoint[]; ma200: MAPoint[];
   };
   rsiLine?: { time: string; value: number }[];
+  bbLines?: { upper: MAPoint[]; lower: MAPoint[] };
 }
 
 const MA_CONFIG = [
@@ -132,6 +133,26 @@ function PatternPath({
   );
 }
 
+/* ── 볼린저밴드 상/하단 채움 오버레이 ── */
+function BBFill({
+  upper, lower, getXY,
+}: {
+  upper: MAPoint[];
+  lower: MAPoint[];
+  getXY: (time: string, price: number) => { x: number; y: number } | null;
+}) {
+  const validPairs = upper
+    .map((u, i) => ({ u: getXY(u.time, u.value), l: getXY(lower[i]?.time ?? u.time, lower[i]?.value ?? 0) }))
+    .filter((p): p is { u: { x: number; y: number }; l: { x: number; y: number } } => p.u !== null && p.l !== null);
+
+  if (!validPairs.length) return null;
+
+  const pathUp   = validPairs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.u.x.toFixed(1)},${p.u.y.toFixed(1)}`).join(' ');
+  const pathDown = [...validPairs].reverse().map(p => `L${p.l.x.toFixed(1)},${p.l.y.toFixed(1)}`).join(' ');
+
+  return <path d={`${pathUp} ${pathDown} Z`} fill="rgba(147,197,253,0.08)" stroke="none" />;
+}
+
 interface OhlcTooltip { open: number; high: number; low: number; close: number; change: number; }
 interface Props { data: ChartDataPayload; ticker: string; }
 
@@ -143,7 +164,11 @@ export default function CandlestickChart({ data, ticker }: Props) {
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const maSeriesRef    = useRef<Partial<Record<string, ISeriesApi<'Line'>>>>({});
 
+  const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
+
   const [activeMA,        setActiveMA]        = useState<Set<string>>(DEFAULT_ACTIVE_MA);
+  const [showBB,          setShowBB]          = useState(false);
   const [ohlc,            setOhlc]            = useState<OhlcTooltip | null>(null);
   const [detectedPats,    setDetectedPats]    = useState<DetectedPattern[]>([]);
   const [overlayVersion,  setOverlayVersion]  = useState(0);
@@ -181,6 +206,13 @@ export default function CandlestickChart({ data, ticker }: Props) {
       maSeriesRef.current[ma.key]?.applyOptions({ visible: activeMA.has(ma.key) });
     }
   }, [activeMA]);
+
+  /* BB 가시성 토글 */
+  useEffect(() => {
+    bbUpperRef.current?.applyOptions({ visible: showBB });
+    bbLowerRef.current?.applyOptions({ visible: showBB });
+    setOverlayVersion(v => v + 1);
+  }, [showBB]);
 
   /* 차트 생성/파괴 */
   useEffect(() => {
@@ -234,6 +266,22 @@ export default function CandlestickChart({ data, ticker }: Props) {
       }))
     );
     mainChart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+    if (data.bbLines?.upper.length && data.bbLines?.lower.length) {
+      const bbColor = '#93c5fd';
+      const bbOpts = {
+        color: bbColor, lineWidth: 1 as const, lineStyle: 2,
+        visible: false,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      };
+      const bbUpper = mainChart.addSeries(LineSeries, bbOpts);
+      bbUpper.setData(data.bbLines.upper);
+      bbUpperRef.current = bbUpper;
+
+      const bbLower = mainChart.addSeries(LineSeries, bbOpts);
+      bbLower.setData(data.bbLines.lower);
+      bbLowerRef.current = bbLower;
+    }
 
     mainChart.subscribeCrosshairMove((param) => {
       if (!param.time) { setOhlc(null); return; }
@@ -318,6 +366,8 @@ export default function CandlestickChart({ data, ticker }: Props) {
       rsiChartRef.current     = null;
       candleSeriesRef.current = null;
       maSeriesRef.current     = {};
+      bbUpperRef.current      = null;
+      bbLowerRef.current      = null;
     };
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -366,6 +416,19 @@ export default function CandlestickChart({ data, ticker }: Props) {
             </button>
           )}
 
+          {/* BB 토글 */}
+          {data.bbLines && (
+            <button
+              type="button"
+              onClick={() => setShowBB(v => !v)}
+              title={showBB ? '볼린저밴드 숨기기' : '볼린저밴드(20,2) 표시'}
+              className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-opacity ${showBB ? 'opacity-100' : 'opacity-25'}`}
+            >
+              <span className="w-3 h-0.5 inline-block rounded" style={{ backgroundColor: '#93c5fd', borderTop: '1px dashed #93c5fd' }} />
+              BB
+            </button>
+          )}
+
           {/* MA 토글 */}
           {MA_CONFIG.map(ma => (
             <button key={ma.key} type="button" onClick={() => toggleMA(ma.key)}
@@ -384,6 +447,21 @@ export default function CandlestickChart({ data, ticker }: Props) {
       {/* 메인 차트 + 패턴 SVG 오버레이 */}
       <div style={{ position: 'relative' }}>
         <div ref={mainRef} className="w-full" />
+
+        {/* BB 채움 SVG 오버레이 (패턴 아래 레이어) */}
+        {showBB && data.bbLines && mainChartRef.current && (
+          <svg
+            key={`bb-${overlayVersion}`}
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              width: '100%', height: 250,
+              pointerEvents: 'none', overflow: 'hidden',
+              zIndex: 5,
+            }}
+          >
+            <BBFill upper={data.bbLines.upper} lower={data.bbLines.lower} getXY={getXY} />
+          </svg>
+        )}
 
         {/* 패턴 오버레이 SVG */}
         {showPatterns && detectedPats.length > 0 && mainChartRef.current && (

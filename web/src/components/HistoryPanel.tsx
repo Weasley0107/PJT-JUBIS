@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { AnalysisParams } from '@/components/AnalysisForm';
+import { DEFAULT_SECTIONS, ALL_SECTIONS } from '@/lib/prompt';
 
 interface HistoryItem {
   id: number;
@@ -48,11 +49,14 @@ export default function HistoryPanel({ refreshTrigger, onSelect, onRerun, select
   const handleRerun = (e: React.MouseEvent, item: HistoryItem) => {
     e.stopPropagation();
     if (!window.confirm(`${item.ticker} 재분석을 실행할까요?\n(토큰이 소모됩니다)`)) return;
+    const technical = item.technical as AnalysisParams['technical'];
+    const sections = technical === 'quick' ? [] : technical === 'advanced' ? ALL_SECTIONS.map(s => s.id) : [...DEFAULT_SECTIONS];
     onRerun({
       ticker: item.ticker,
       period: item.period as AnalysisParams['period'],
-      technical: item.technical as AnalysisParams['technical'],
+      technical,
       compare: item.compare ?? '',
+      sections,
     });
   };
 

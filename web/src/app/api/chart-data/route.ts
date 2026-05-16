@@ -46,6 +46,23 @@ function calcRSI(closes: number[], period: number = 14): (number | null)[] {
   return result;
 }
 
+function calcBB(closes: number[], period = 20, k = 2): {
+  upper: (number | null)[];
+  lower: (number | null)[];
+} {
+  const upper: (number | null)[] = [];
+  const lower: (number | null)[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { upper.push(null); lower.push(null); continue; }
+    const slice = closes.slice(i - period + 1, i + 1);
+    const avg = slice.reduce((a, b) => a + b, 0) / period;
+    const std = Math.sqrt(slice.reduce((a, b) => a + (b - avg) ** 2, 0) / period);
+    upper.push(avg + k * std);
+    lower.push(avg - k * std);
+  }
+  return { upper, lower };
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const ticker = searchParams.get('ticker')?.toUpperCase() ?? '';
@@ -78,6 +95,7 @@ export async function GET(req: NextRequest) {
     const ma120 = calcMA(closes, 120);
     const ma200 = calcMA(closes, 200);
     const rsi14 = calcRSI(closes, 14);
+    const bb    = calcBB(closes, 20, 2);
 
     const displayStart = new Date();
     displayStart.setDate(displayStart.getDate() - displayDays);
@@ -119,6 +137,10 @@ export async function GET(req: NextRequest) {
         ma200: makeMALine(ma200),
       },
       rsiLine,
+      bbLines: {
+        upper: makeMALine(bb.upper),
+        lower: makeMALine(bb.lower),
+      },
     });
   } catch (err) {
     console.error('[chart-data]', err);
