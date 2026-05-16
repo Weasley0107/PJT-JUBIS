@@ -47,6 +47,7 @@ export default function HistoryPanel({ refreshTrigger, onSelect, onRerun, select
 
   const handleRerun = (e: React.MouseEvent, item: HistoryItem) => {
     e.stopPropagation();
+    if (!window.confirm(`${item.ticker} 재분석을 실행할까요?\n(토큰이 소모됩니다)`)) return;
     onRerun({
       ticker: item.ticker,
       period: item.period as AnalysisParams['period'],

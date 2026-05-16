@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { TickerResult } from '@/app/api/search/route';
+import { ALL_SECTIONS, DEFAULT_SECTIONS, type TechnicalLevel } from '@/lib/prompt';
 
 export interface AnalysisParams {
   ticker: string;
   period: '3m' | '6m' | '1y' | '2y' | '3y';
-  technical: 'basic' | 'standard' | 'advanced';
-  // 쉼표로 구분된 비교 종목 티커 문자열 (예: "AMD, TSM"). 비어있으면 비교표 미포함
+  technical: TechnicalLevel;
   compare: string;
+  sections: number[];
 }
 
 interface Props {
@@ -16,24 +17,28 @@ interface Props {
   isLoading: boolean;
 }
 
+/* technical 레벨에 따른 기본 섹션 세트 */
+function defaultSectionsFor(t: TechnicalLevel): number[] {
+  if (t === 'quick') return [];
+  if (t === 'advanced') return ALL_SECTIONS.map(s => s.id);
+  return [...DEFAULT_SECTIONS]; // basic / standard: 필수 5개
+}
+
 export default function AnalysisForm({ onSubmit, isLoading }: Props) {
   const [ticker, setTicker] = useState('');
   const [period, setPeriod] = useState<AnalysisParams['period']>('6m');
-  const [technical, setTechnical] = useState<AnalysisParams['technical']>('standard');
-  // 비교 종목은 기본 숨김 — 고급 옵션으로 분류해 폼이 단순해 보이게 함
+  const [technical, setTechnical] = useState<TechnicalLevel>('standard');
+  const [sections, setSections] = useState<number[]>(DEFAULT_SECTIONS);
   const [compare, setCompare] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [peersLoading, setPeersLoading] = useState(false);
-  // 자동 추천으로 채워진 상태인지 구분 — 수동 수정 시 뱃지 숨김
   const [autoFilled, setAutoFilled] = useState(false);
 
-  // 자동완성
   const [suggestions, setSuggestions] = useState<TickerResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // 외부 클릭 시 드롭다운 닫기
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
@@ -44,10 +49,20 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const handleTechnicalChange = (t: TechnicalLevel) => {
+    setTechnical(t);
+    setSections(defaultSectionsFor(t));
+  };
+
+  const toggleSection = (id: number) => {
+    setSections(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
   const searchTicker = (value: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (value.length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
-
     debounceRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(value)}`);
@@ -73,11 +88,9 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
       if (peers.length > 0) {
         setCompare(peers.join(', '));
         setAutoFilled(true);
-        setShowAdvanced(true); // 자동 추천 시 섹션 자동 열기
+        setShowAdvanced(true);
       }
-    } catch {
-      // 실패해도 사용자가 직접 입력할 수 있으므로 무시
-    } finally {
+    } catch { /* 무시 */ } finally {
       setPeersLoading(false);
     }
   };
@@ -92,8 +105,9 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ticker.trim()) return;
+    if (technical !== 'quick' && sections.length === 0) return;
     setShowSuggestions(false);
-    onSubmit({ ticker: ticker.trim(), period, technical, compare });
+    onSubmit({ ticker: ticker.trim(), period, technical, compare, sections });
   };
 
   const segBtn = (active: boolean) =>
@@ -102,6 +116,8 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
         ? 'bg-blue-600 border-blue-500 text-white'
         : 'bg-gray-100 border-gray-200 text-gray-600 hover:border-gray-400 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400 dark:hover:border-gray-400'
     }`;
+
+  const isQuick = technical === 'quick';
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -123,7 +139,7 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
           />
           <button
             type="submit"
-            disabled={isLoading || !ticker.trim()}
+            disabled={isLoading || !ticker.trim() || (!isQuick && sections.length === 0)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors text-sm whitespace-nowrap"
           >
             {isLoading ? (
@@ -135,7 +151,6 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
           </button>
         </div>
 
-        {/* 자동완성 드롭다운 */}
         {showSuggestions && (
           <div className="absolute z-50 top-full mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg overflow-y-auto max-h-64">
             {suggestions.map((item) => (
@@ -168,39 +183,97 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
         </div>
       </div>
 
-      {/* 기술적 분석 */}
+      {/* 분석 모드 */}
       <div>
-        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">기술적 분석</label>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">분석 모드</label>
         <div className="flex gap-1">
-          {(['basic', 'standard', 'advanced'] as const).map((t) => (
-            <button key={t} type="button" onClick={() => setTechnical(t)} disabled={isLoading} className={segBtn(technical === t)}>
-              {t === 'basic' ? '기본' : t === 'standard' ? '표준' : '고급'}
+          {(['quick', 'basic', 'standard', 'advanced'] as const).map((t) => (
+            <button key={t} type="button" onClick={() => handleTechnicalChange(t)} disabled={isLoading} className={segBtn(technical === t)}>
+              {t === 'quick' ? '빠른' : t === 'basic' ? '기본' : t === 'standard' ? '표준' : '고급'}
             </button>
           ))}
         </div>
-        <div className="mt-1.5 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500 space-y-0.5">
-          {technical === 'basic' && (
-            <p>이동평균선(20/60/120일) · 지지·저항 — 빠른 개요</p>
-          )}
-          {technical === 'standard' && (
-            <p>이동평균 + MACD + RSI(14) — 균형잡힌 분석 <span className="text-blue-400">(권장)</span></p>
-          )}
-          {technical === 'advanced' && (
-            <p>표준 + 볼린저밴드 · 피보나치 · VWAP · 스토캐스틱 — 심층 분석</p>
-          )}
+        <div className="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+          {technical === 'quick'    && <p>핵심 5개 섹션 — 토큰 절약 <span className="text-emerald-400">(~50% 절감)</span></p>}
+          {technical === 'basic'    && <p>이동평균선(20/60/120일) · 지지·저항 — 빠른 개요</p>}
+          {technical === 'standard' && <p>이동평균 + MACD + RSI(14) — 균형잡힌 분석 <span className="text-blue-400">(권장)</span></p>}
+          {technical === 'advanced' && <p>표준 + 볼린저밴드 · 피보나치 · VWAP · 스토캐스틱 — 심층 분석</p>}
         </div>
       </div>
 
-      {/* 비교 종목 토글 — 입력 시 Claude 프롬프트 섹션 7(산업 분석)에 경쟁사 비교표가 추가됨 */}
-      <button
-        type="button"
-        onClick={() => setShowAdvanced(!showAdvanced)}
-        className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-      >
-        {showAdvanced ? '▲ 접기' : '▼ 비교 종목 추가'}
-      </button>
+      {/* 섹션 선택 — 빠른 모드 제외 */}
+      {!isQuick && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-gray-600 dark:text-gray-300">
+              포함 섹션
+              <span className="ml-1.5 text-gray-400 font-normal">({sections.length}/10)</span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setSections(ALL_SECTIONS.map(s => s.id))}
+                disabled={isLoading}
+                className="text-[10px] text-gray-400 hover:text-blue-500 transition-colors"
+              >
+                전체
+              </button>
+              <button
+                type="button"
+                onClick={() => setSections(DEFAULT_SECTIONS)}
+                disabled={isLoading}
+                className="text-[10px] text-gray-400 hover:text-blue-500 transition-colors"
+              >
+                필수
+              </button>
+              <button
+                type="button"
+                onClick={() => setSections([])}
+                disabled={isLoading}
+                className="text-[10px] text-gray-400 hover:text-red-500 transition-colors"
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {ALL_SECTIONS.map(sec => {
+              const on = sections.includes(sec.id);
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  onClick={() => toggleSection(sec.id)}
+                  disabled={isLoading}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                    on
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-400'
+                  }`}
+                >
+                  {sec.id}. {sec.label}
+                </button>
+              );
+            })}
+          </div>
+          {sections.length === 0 && (
+            <p className="mt-1 text-[10px] text-red-400">섹션을 1개 이상 선택하세요.</p>
+          )}
+        </div>
+      )}
 
-      {showAdvanced && (
+      {/* 비교 종목 — 빠른 모드 + 섹션 7 미선택 시 숨김 */}
+      {!isQuick && sections.includes(7) && (
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+        >
+          {showAdvanced ? '▲ 접기' : '▼ 비교 종목 추가'}
+        </button>
+      )}
+
+      {showAdvanced && !isQuick && sections.includes(7) && (
         <div>
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
             비교 종목{' '}
@@ -217,7 +290,6 @@ export default function AnalysisForm({ onSubmit, isLoading }: Props) {
               </span>
             )}
           </label>
-          {/* 자동완성 없이 자유 입력 — 여러 종목을 빠르게 넣으려면 검색 UX가 오히려 불편함 */}
           <input
             type="text"
             value={compare}

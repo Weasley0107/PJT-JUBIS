@@ -34,6 +34,7 @@ export default function Home() {
   const [showGuide, setShowGuide] = useState(false);
   const streamStartRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const chartCacheRef = useRef<Map<string, ChartDataPayload>>(new Map());
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -81,13 +82,22 @@ export default function Home() {
     setProgress(0);
     setElapsedSecs(0);
 
-    // 차트 데이터 병렬 fetch (분석 스트리밍과 동시에)
-    fetch(`/api/chart-data?ticker=${encodeURIComponent(params.ticker)}&period=${params.period}`)
-      .then(r => r.ok ? r.json() : null)
-      .then((d: ChartDataPayload | null) => {
-        if (d?.candles?.length) setChartData(d);
-      })
-      .catch(() => null);
+    // 차트 데이터 병렬 fetch (분석 스트리밍과 동시에) — 캐시 우선
+    const cacheKey = `${params.ticker}:${params.period}`;
+    const cached = chartCacheRef.current.get(cacheKey);
+    if (cached) {
+      setChartData(cached);
+    } else {
+      fetch(`/api/chart-data?ticker=${encodeURIComponent(params.ticker)}&period=${params.period}`)
+        .then(r => r.ok ? r.json() : null)
+        .then((d: ChartDataPayload | null) => {
+          if (d?.candles?.length) {
+            chartCacheRef.current.set(cacheKey, d);
+            setChartData(d);
+          }
+        })
+        .catch(() => null);
+    }
 
     try {
       const res = await fetch('/api/analyze-cli', {
@@ -166,10 +176,21 @@ export default function Home() {
       setCurrentAnalysisDate(createdAt.slice(0, 10).replace(/-/g, ''));
 
       setChartData(null);
-      fetch(`/api/chart-data?ticker=${encodeURIComponent(data.ticker)}&period=6m`)
-        .then(r => r.ok ? r.json() : null)
-        .then((d: ChartDataPayload | null) => { if (d?.candles?.length) setChartData(d); })
-        .catch(() => null);
+      const cacheKey = `${data.ticker}:6m`;
+      const cached = chartCacheRef.current.get(cacheKey);
+      if (cached) {
+        setChartData(cached);
+      } else {
+        fetch(`/api/chart-data?ticker=${encodeURIComponent(data.ticker)}&period=6m`)
+          .then(r => r.ok ? r.json() : null)
+          .then((d: ChartDataPayload | null) => {
+            if (d?.candles?.length) {
+              chartCacheRef.current.set(cacheKey, d);
+              setChartData(d);
+            }
+          })
+          .catch(() => null);
+      }
     }
   };
 

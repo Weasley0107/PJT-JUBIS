@@ -108,6 +108,7 @@ export default function ClaudeAuthStatus({ onStatusChange, usageRefreshTrigger }
   };
 
   const handleLogout = async () => {
+    if (!window.confirm('Claude CLI에서 로그아웃할까요?\n로그아웃 후 분석 기능을 사용할 수 없습니다.')) return;
     setIsLoggingOut(true);
     try {
       await fetch('/api/claude-auth', { method: 'DELETE' });

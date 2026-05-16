@@ -42,11 +42,12 @@ interface StreamEvent {
 }
 
 export async function POST(request: NextRequest) {
-  const { ticker, period, technical, compare } = await request.json() as {
+  const { ticker, period, technical, compare, sections } = await request.json() as {
     ticker: string;
     period: PeriodCode;
     technical: TechnicalLevel;
     compare: string;
+    sections?: number[];
   };
 
   if (!ticker?.trim()) {
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const prompt = buildPrompt({ ticker: ticker.trim(), period, technical, compare });
+  const prompt = buildPrompt({ ticker: ticker.trim(), period, technical, compare, sections });
 
   console.log(`[CLI] ${ticker.trim()} 분석 시작 — 프롬프트 ${prompt.length}자`);
 
