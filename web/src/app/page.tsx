@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AnalysisForm, { type AnalysisParams } from '@/components/AnalysisForm';
 import StreamingOutput from '@/components/StreamingOutput';
@@ -12,6 +11,9 @@ import ClaudeAuthStatus from '@/components/ClaudeAuthStatus';
 import TokenExhaustedModal from '@/components/TokenExhaustedModal';
 import GuidePanel from '@/components/GuidePanel';
 import type { ChartDataPayload } from '@/components/charts/CandlestickChart';
+import type { DetectedPattern } from '@/lib/detectPatterns';
+import { detectPatterns } from '@/lib/detectPatterns';
+import ReactMarkdown from 'react-markdown';
 
 const TOKEN_EXHAUSTED_MARKER = '__TOKEN_EXHAUSTED__';
 
@@ -32,8 +34,13 @@ export default function Home() {
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const [tokenExhaustedTime, setTokenExhaustedTime] = useState<Date | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [chartPeriod, setChartPeriod] = useState('6m');
+  const [chartPatterns, setChartPatterns] = useState<DetectedPattern[]>([]);
+  const [chartAnalysis, setChartAnalysis] = useState('');
+  const [isChartAnalyzing, setIsChartAnalyzing] = useState(false);
   const streamStartRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const chartAnalysisAbortRef = useRef<AbortController | null>(null);
   const chartCacheRef = useRef<Map<string, ChartDataPayload>>(new Map());
 
   useEffect(() => {
@@ -47,6 +54,14 @@ export default function Home() {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/login');
   };
+
+  // ESC 키로 가이드 모달 닫기
+  useEffect(() => {
+    if (!showGuide) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowGuide(false); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showGuide]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -67,6 +82,69 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 데이터를 직접 받아서 실행 — 자동 트리거 + 수동 버튼 공통 사용
+  const runChartAnalysis = useCallback(async (data: ChartDataPayload, ticker: string, period: string) => {
+    chartAnalysisAbortRef.current?.abort();
+    const controller = new AbortController();
+    chartAnalysisAbortRef.current = controller;
+
+    const pats = detectPatterns(data.candles);
+    setChartPatterns(pats);
+    setChartAnalysis('');
+    setIsChartAnalyzing(true);
+
+    const lastVal = (arr: { value: number }[]) => arr.length ? arr[arr.length - 1].value : null;
+    const last  = data.candles[data.candles.length - 1];
+    const first = data.candles[0];
+
+    const payload = {
+      ticker,
+      period,
+      currentPrice: last.close,
+      periodReturn: ((last.close - first.close) / first.close) * 100,
+      recentCandles: data.candles.slice(-10).map(c => ({
+        date: c.time, open: +c.open.toFixed(2), high: +c.high.toFixed(2),
+        low: +c.low.toFixed(2), close: +c.close.toFixed(2),
+      })),
+      ma5:   lastVal(data.maLines.ma5),
+      ma20:  lastVal(data.maLines.ma20),
+      ma60:  lastVal(data.maLines.ma60),
+      ma120: lastVal(data.maLines.ma120),
+      ma200: lastVal(data.maLines.ma200),
+      rsi:   data.rsiLine?.length ? data.rsiLine[data.rsiLine.length - 1].value : null,
+      rsiPrev3: data.rsiLine?.slice(-3).map(r => +r.value.toFixed(1)) ?? [],
+      bbUpper: data.bbLines ? lastVal(data.bbLines.upper) : null,
+      bbLower: data.bbLines ? lastVal(data.bbLines.lower) : null,
+      patterns: pats.map(p => ({ nameKo: p.nameKo, signal: p.signal, confidence: p.confidence, description: p.description })),
+      volSpikeCount: data.volSpikes?.length ?? 0,
+      sector:   data.sector,
+      industry: data.industry,
+    };
+
+    try {
+      const res = await fetch('/api/chart-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error('API 오류');
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        setChartAnalysis(prev => prev + dec.decode(value, { stream: true }));
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setChartAnalysis(`> 오류: ${err.message}`);
+      }
+    } finally {
+      setIsChartAnalyzing(false);
+    }
+  }, []); // refs + state setters만 사용 — 안정적
+
   const handleAnalyze = useCallback(async (params: AnalysisParams) => {
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -79,14 +157,18 @@ export default function Home() {
     setCurrentAnalysisDate(todayDate);
     setSelectedHistoryId(null);
     setChartData(null);
+    setChartPeriod(params.period);
+    setChartAnalysis('');
+    setChartPatterns([]);
     setProgress(0);
     setElapsedSecs(0);
 
-    // 차트 데이터 병렬 fetch (분석 스트리밍과 동시에) — 캐시 우선
+    // 차트 데이터 병렬 fetch + 완료되면 자동으로 AI 차트 해석 실행
     const cacheKey = `${params.ticker}:${params.period}`;
     const cached = chartCacheRef.current.get(cacheKey);
     if (cached) {
       setChartData(cached);
+      runChartAnalysis(cached, params.ticker, params.period);
     } else {
       fetch(`/api/chart-data?ticker=${encodeURIComponent(params.ticker)}&period=${params.period}`)
         .then(r => r.ok ? r.json() : null)
@@ -94,6 +176,7 @@ export default function Home() {
           if (d?.candles?.length) {
             chartCacheRef.current.set(cacheKey, d);
             setChartData(d);
+            runChartAnalysis(d, params.ticker, params.period);
           }
         })
         .catch(() => null);
@@ -174,7 +257,9 @@ export default function Home() {
       setContent(data.content);
       setCurrentTicker(data.ticker);
       setCurrentAnalysisDate(createdAt.slice(0, 10).replace(/-/g, ''));
-
+      setChartAnalysis('');
+      setChartPatterns([]);
+      setChartPeriod('6m');
       setChartData(null);
       const cacheKey = `${data.ticker}:6m`;
       const cached = chartCacheRef.current.get(cacheKey);
@@ -193,6 +278,36 @@ export default function Home() {
       }
     }
   };
+
+  const handlePeriodChange = useCallback(async (newPeriod: string) => {
+    if (!currentTicker) return;
+    setChartPeriod(newPeriod);
+    setChartData(null);
+    const cacheKey = `${currentTicker}:${newPeriod}`;
+    const cached = chartCacheRef.current.get(cacheKey);
+    if (cached) {
+      setChartData(cached);
+      runChartAnalysis(cached, currentTicker, newPeriod);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/chart-data?ticker=${encodeURIComponent(currentTicker)}&period=${newPeriod}`);
+      if (r.ok) {
+        const d: ChartDataPayload = await r.json();
+        if (d?.candles?.length) {
+          chartCacheRef.current.set(cacheKey, d);
+          setChartData(d);
+          runChartAnalysis(d, currentTicker, newPeriod);
+        }
+      }
+    } catch { /* ignore */ }
+  }, [currentTicker, runChartAnalysis]);
+
+  // 수동 버튼용 래퍼 (현재 상태 기반)
+  const handleChartAnalysis = useCallback(() => {
+    if (!chartData || !currentTicker) return;
+    runChartAnalysis(chartData, currentTicker, chartPeriod);
+  }, [chartData, currentTicker, chartPeriod, runChartAnalysis]);
 
   const mdFilename = currentTicker && currentAnalysisDate
     ? `${currentTicker}_analysis_${currentAnalysisDate}.md`
@@ -301,9 +416,8 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* 메인 영역 — 분석 + 가이드 패널 */}
-      <div className="flex-1 flex overflow-hidden">
-      <main className={`flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${showGuide ? 'w-1/2' : 'flex-1'}`}>
+      {/* 메인 영역 */}
+      <main className="flex-1 flex flex-col overflow-hidden">
 
         {/* 상단 바 */}
         <div className="relative flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/50 backdrop-blur-sm flex-shrink-0 transition-colors">
@@ -362,12 +476,45 @@ export default function Home() {
         {/* 캔들차트 */}
         {currentTicker && (
           chartData ? (
-            <CandlestickChart data={chartData} ticker={currentTicker} />
+            <CandlestickChart
+              data={chartData}
+              ticker={currentTicker}
+              period={chartPeriod}
+              onPeriodChange={handlePeriodChange}
+              onPatternsDetected={setChartPatterns}
+              onAnalyzeChart={handleChartAnalysis}
+              isAnalyzingChart={isChartAnalyzing}
+            />
           ) : (
             <div className="h-[52px] flex items-center px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
               <span className="text-xs text-gray-400 dark:text-gray-500 animate-pulse">차트 데이터 로딩 중...</span>
             </div>
           )
+        )}
+
+        {/* AI 차트 해석 결과 패널 */}
+        {(chartAnalysis || isChartAnalyzing) && (
+          <div className="border-b border-gray-200 dark:border-gray-800 bg-indigo-50/40 dark:bg-indigo-950/20 px-5 py-3 flex-shrink-0">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full bg-indigo-500 ${isChartAnalyzing ? 'animate-pulse' : ''}`} />
+                AI 차트 해석
+                {isChartAnalyzing && <span className="text-gray-400 dark:text-gray-500 font-normal">분석 중...</span>}
+              </span>
+              {!isChartAnalyzing && (
+                <button
+                  onClick={() => setChartAnalysis('')}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs"
+                >✕</button>
+              )}
+            </div>
+            <div className="prose prose-xs max-w-none dark:prose-invert prose-p:my-1 prose-p:text-xs prose-strong:text-gray-900 dark:prose-strong:text-white text-gray-700 dark:text-gray-300">
+              <ReactMarkdown>{chartAnalysis || ' '}</ReactMarkdown>
+              {isChartAnalyzing && (
+                <span className="inline-block w-1.5 h-3.5 bg-indigo-400 ml-0.5 animate-pulse align-middle" />
+              )}
+            </div>
+          </div>
         )}
 
         {/* 스트리밍 출력 */}
@@ -376,15 +523,25 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 가이드 패널 */}
-      <div
-        className={`flex flex-col overflow-hidden border-l border-gray-200 dark:border-gray-800 transition-all duration-300 ease-in-out ${
-          showGuide ? 'w-1/2' : 'w-0'
-        }`}
-      >
-        {showGuide && <GuidePanel onClose={() => setShowGuide(false)} />}
-      </div>
-      </div>
+      {/* 가이드 모달 — 레이아웃 영향 없이 오버레이로 표시 */}
+      {showGuide && (
+        <>
+          {/* 배경 딤 — 클릭 시 닫기 */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowGuide(false)}
+          />
+          {/* 모달 컨테이너 */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6 pointer-events-none">
+            <div
+              className="w-full max-w-3xl h-[90vh] rounded-2xl shadow-2xl overflow-hidden pointer-events-auto flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <GuidePanel onClose={() => setShowGuide(false)} />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

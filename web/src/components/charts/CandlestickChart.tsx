@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  createChart, ColorType, CrosshairMode,
+  createChart, createSeriesMarkers, ColorType, CrosshairMode,
   CandlestickSeries, LineSeries, HistogramSeries,
   type ISeriesApi, type IChartApi, type Time,
 } from 'lightweight-charts';
@@ -19,6 +19,9 @@ export interface ChartDataPayload {
   };
   rsiLine?: { time: string; value: number }[];
   bbLines?: { upper: MAPoint[]; lower: MAPoint[] };
+  volSpikes?: string[];
+  sector?: string;
+  industry?: string;
 }
 
 const MA_CONFIG = [
@@ -153,10 +156,45 @@ function BBFill({
   return <path d={`${pathUp} ${pathDown} Z`} fill="rgba(147,197,253,0.08)" stroke="none" />;
 }
 
-interface OhlcTooltip { open: number; high: number; low: number; close: number; change: number; }
-interface Props { data: ChartDataPayload; ticker: string; }
+const PERIODS = ['3m', '6m', '1y', '2y', '3y'] as const;
 
-export default function CandlestickChart({ data, ticker }: Props) {
+function computeTargets(data: ChartDataPayload) {
+  const last = data.candles[data.candles.length - 1];
+  if (!last) return null;
+  const price = last.close;
+  const lastVal = (arr: MAPoint[]) => arr.length ? arr[arr.length - 1].value : null;
+
+  const ma60  = lastVal(data.maLines.ma60);
+  const ma120 = lastVal(data.maLines.ma120);
+  const ma200 = lastVal(data.maLines.ma200);
+  const bbUpper = data.bbLines ? lastVal(data.bbLines.upper) : null;
+  const bbLower = data.bbLines ? lastVal(data.bbLines.lower) : null;
+
+  const supports = [ma60, ma120, ma200, bbLower]
+    .filter((v): v is number => v != null && v < price * 0.999);
+  const support = supports.length ? Math.max(...supports) : null;
+
+  const recentHigh = data.candles.slice(-20).reduce((m, c) => Math.max(m, c.high), 0);
+  const resistances = [bbUpper, recentHigh > price * 1.005 ? recentHigh : null]
+    .filter((v): v is number => v != null && v > price * 1.001);
+  const resistance = resistances.length ? Math.min(...resistances) : null;
+
+  const stopLoss = support ? +(support * 0.982).toFixed(2) : null;
+  return { support: support ? +support.toFixed(2) : null, resistance: resistance ? +resistance.toFixed(2) : null, stopLoss };
+}
+
+interface OhlcTooltip { open: number; high: number; low: number; close: number; change: number; }
+interface Props {
+  data: ChartDataPayload;
+  ticker: string;
+  period: string;
+  onPeriodChange: (p: string) => void;
+  onPatternsDetected?: (patterns: DetectedPattern[]) => void;
+  onAnalyzeChart?: () => void;
+  isAnalyzingChart?: boolean;
+}
+
+export default function CandlestickChart({ data, ticker, period, onPeriodChange, onPatternsDetected, onAnalyzeChart, isAnalyzingChart }: Props) {
   const mainRef = useRef<HTMLDivElement>(null);
   const rsiRef  = useRef<HTMLDivElement>(null);
   const mainChartRef   = useRef<IChartApi | null>(null);
@@ -166,6 +204,9 @@ export default function CandlestickChart({ data, ticker }: Props) {
 
   const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const volMarkersRef = useRef<{ detach: () => void } | null>(null);
+  const onPatsRef = useRef(onPatternsDetected);
+  useEffect(() => { onPatsRef.current = onPatternsDetected; }, [onPatternsDetected]);
 
   const [activeMA,        setActiveMA]        = useState<Set<string>>(DEFAULT_ACTIVE_MA);
   const [showBB,          setShowBB]          = useState(false);
@@ -319,29 +360,66 @@ export default function CandlestickChart({ data, ticker }: Props) {
 
     /* 두 차트 시간축 동기화 */
     let syncing = false;
+    let resizing = false; // 리사이즈 중에는 sync 차단 (뷰포트 좁아짐 방지)
     mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (syncing || !range) return;
+      if (syncing || resizing || !range) return;
       syncing = true;
       rsiChart.timeScale().setVisibleLogicalRange(range);
       syncing = false;
-      setOverlayVersion(v => v + 1); // 오버레이 좌표 갱신
+      setOverlayVersion(v => v + 1);
     });
     rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (syncing || !range) return;
+      if (syncing || resizing || !range) return;
       syncing = true;
       mainChart.timeScale().setVisibleLogicalRange(range);
       syncing = false;
     });
 
-    /* 패턴 감지 */
-    setDetectedPats(detectPatterns(data.candles));
+    /* 거래량 급등 마커 */
+    if (data.volSpikes?.length) {
+      const spikeSet = new Set(data.volSpikes);
+      const markers = data.candles
+        .filter(c => spikeSet.has(c.time))
+        .map(c => ({
+          time: c.time as Time,
+          position: 'belowBar' as const,
+          color: '#f59e0b',
+          shape: 'arrowUp' as const,
+          text: '',
+          size: 0.8,
+        }))
+        .sort((a, b) => (a.time as string).localeCompare(b.time as string));
+      if (markers.length) {
+        volMarkersRef.current?.detach();
+        volMarkersRef.current = createSeriesMarkers(candleSeries, markers);
+      }
+    }
 
-    const onResize = () => {
-      if (mainRef.current) mainChart.applyOptions({ width: mainRef.current.clientWidth });
-      if (rsiRef.current)  rsiChart.applyOptions({ width: rsiRef.current.clientWidth });
-      setOverlayVersion(v => v + 1);
-    };
-    window.addEventListener('resize', onResize);
+    /* 패턴 감지 */
+    const pats = detectPatterns(data.candles);
+    setDetectedPats(pats);
+    onPatsRef.current?.(pats);
+
+    // ResizeObserver로 컨테이너 크기 변화 감지 (가이드 패널, window resize, 4K 등)
+    // RAF로 프레임당 1회만 실행, resizing 플래그로 sync 차단, fitContent로 전체 데이터 표시
+    let rafId: number | null = null;
+    const ro = new ResizeObserver(() => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const w = mainEl.clientWidth;
+        if (w > 0) {
+          resizing = true;
+          mainChart.applyOptions({ width: w });
+          rsiChart.applyOptions({ width: w });
+          resizing = false;
+          mainChart.timeScale().fitContent();
+          rsiChart.timeScale().fitContent();
+        }
+        setOverlayVersion(v => v + 1);
+        rafId = null;
+      });
+    });
+    ro.observe(mainEl);
 
     const observer = new MutationObserver(() => {
       const d = document.documentElement.classList.contains('dark');
@@ -358,8 +436,12 @@ export default function CandlestickChart({ data, ticker }: Props) {
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     return () => {
-      window.removeEventListener('resize', onResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      ro.disconnect();
       observer.disconnect();
+      // detach plugin primitives BEFORE removing the chart to avoid "Object is disposed"
+      try { volMarkersRef.current?.detach(); } catch { /* already disposed */ }
+      volMarkersRef.current   = null;
       mainChart.remove();
       rsiChart.remove();
       mainChartRef.current    = null;
@@ -370,6 +452,8 @@ export default function CandlestickChart({ data, ticker }: Props) {
       bbLowerRef.current      = null;
     };
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const targets = useMemo(() => computeTargets(data), [data]);
 
   const lastCandle = data.candles[data.candles.length - 1];
   const displayOhlc: OhlcTooltip | null = ohlc ?? (lastCandle
@@ -401,6 +485,37 @@ export default function CandlestickChart({ data, ticker }: Props) {
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {/* AI 차트 해석 버튼 */}
+          {onAnalyzeChart && (
+            <button
+              type="button"
+              onClick={onAnalyzeChart}
+              disabled={isAnalyzingChart}
+              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAnalyzingChart
+                ? <span className="animate-pulse">...</span>
+                : '🤖 AI 해석'}
+            </button>
+          )}
+
+          {/* 기간 전환 */}
+          <div className="flex items-center gap-0.5 border-r border-gray-200 dark:border-gray-700 pr-1.5 mr-0.5">
+            {PERIODS.map(p => (
+              <button
+                key={p} type="button"
+                onClick={() => onPeriodChange(p)}
+                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                  period === p
+                    ? 'bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 font-semibold'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+
           {/* 패턴 감지 토글 */}
           {detectedPats.length > 0 && (
             <button
@@ -443,6 +558,35 @@ export default function CandlestickChart({ data, ticker }: Props) {
           ))}
         </div>
       </div>
+
+      {/* 목표주가/손절가 스트립 */}
+      {targets && (
+        <div className="px-4 py-1 flex items-center gap-2.5 text-[11px] border-t border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40">
+          <span className="text-gray-400 dark:text-gray-500">지지</span>
+          <span className="font-mono font-medium text-blue-500">{targets.support != null ? `$${targets.support}` : '—'}</span>
+          <span className="text-gray-300 dark:text-gray-700">·</span>
+          <span className="text-gray-400 dark:text-gray-500">저항</span>
+          <span className="font-mono font-medium text-amber-500">{targets.resistance != null ? `$${targets.resistance}` : '—'}</span>
+          <span className="text-gray-300 dark:text-gray-700">·</span>
+          <span className="text-gray-400 dark:text-gray-500">손절</span>
+          <span className="font-mono font-medium text-red-500">{targets.stopLoss != null ? `$${targets.stopLoss}` : '—'}</span>
+          {data.volSpikes && data.volSpikes.length > 0 && (
+            <>
+              <span className="text-gray-300 dark:text-gray-700">·</span>
+              <span className="flex items-center gap-1 text-amber-500">
+                <span>▲</span>
+                <span>거래량 급등 {data.volSpikes.length}회</span>
+              </span>
+            </>
+          )}
+          {data.sector && (
+            <>
+              <span className="text-gray-300 dark:text-gray-700">·</span>
+              <span className="text-gray-400 dark:text-gray-500 truncate max-w-[140px]">{data.sector}</span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* 메인 차트 + 패턴 SVG 오버레이 */}
       <div style={{ position: 'relative' }}>

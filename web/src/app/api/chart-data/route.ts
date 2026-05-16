@@ -46,6 +46,14 @@ function calcRSI(closes: number[], period: number = 14): (number | null)[] {
   return result;
 }
 
+function calcVolSpikes(volumes: number[], period = 20, mult = 2): boolean[] {
+  return volumes.map((v, i) => {
+    if (i < period) return false;
+    const avg = volumes.slice(i - period, i).reduce((a, b) => a + b, 0) / period;
+    return avg > 0 && v > avg * mult;
+  });
+}
+
 function calcBB(closes: number[], period = 20, k = 2): {
   upper: (number | null)[];
   lower: (number | null)[];
@@ -88,7 +96,8 @@ export async function GET(req: NextRequest) {
 
     if (!quotes.length) return NextResponse.json({ candles: [], maLines: {} });
 
-    const closes: number[] = quotes.map((q) => q.close);
+    const closes:  number[] = quotes.map((q) => q.close);
+    const volumes: number[] = quotes.map((q) => q.volume ?? 0);
     const ma5   = calcMA(closes, 5);
     const ma20  = calcMA(closes, 20);
     const ma60  = calcMA(closes, 60);
@@ -96,6 +105,7 @@ export async function GET(req: NextRequest) {
     const ma200 = calcMA(closes, 200);
     const rsi14 = calcRSI(closes, 14);
     const bb    = calcBB(closes, 20, 2);
+    const spikes = calcVolSpikes(volumes, 20, 2);
 
     const displayStart = new Date();
     displayStart.setDate(displayStart.getDate() - displayDays);
@@ -127,6 +137,27 @@ export async function GET(req: NextRequest) {
         : null)
       .filter((x): x is { time: string; value: number } => x !== null);
 
+    const volSpikes: string[] = spikes
+      .slice(from)
+      .map((isSpike, i) => isSpike ? toDateStr(quotes[from + i].date) : null)
+      .filter((t): t is string => t !== null);
+
+    // Sector / industry — best-effort, non-blocking
+    let sector: string | undefined;
+    let industry: string | undefined;
+    try {
+      const qsRes = await fetch(
+        `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=assetProfile`,
+        { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(3000) },
+      );
+      if (qsRes.ok) {
+        const qs = await qsRes.json();
+        const profile = qs.quoteSummary?.result?.[0]?.assetProfile;
+        if (profile?.sector)   sector   = profile.sector;
+        if (profile?.industry) industry = profile.industry;
+      }
+    } catch { /* ignore */ }
+
     return NextResponse.json({
       candles,
       maLines: {
@@ -141,6 +172,9 @@ export async function GET(req: NextRequest) {
         upper: makeMALine(bb.upper),
         lower: makeMALine(bb.lower),
       },
+      volSpikes,
+      ...(sector   && { sector }),
+      ...(industry && { industry }),
     });
   } catch (err) {
     console.error('[chart-data]', err);
