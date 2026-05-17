@@ -1,5 +1,127 @@
 import type { ChartCandle } from '@/components/charts/CandlestickChart';
 
+/* ── 단봉 캔들 패턴 ── */
+export interface CandlePattern {
+  time: string;
+  type: string;
+  nameKo: string;
+  signal: 'bullish' | 'bearish' | 'neutral';
+  candleIndex: number;
+  description: string;
+}
+
+export function detectCandlePatterns(candles: ChartCandle[]): CandlePattern[] {
+  const results: CandlePattern[] = [];
+  const n = candles.length;
+
+  for (let i = 2; i < n; i++) {
+    const c  = candles[i];
+    const p  = candles[i - 1];
+    const pp = candles[i - 2];
+
+    const body        = Math.abs(c.close - c.open);
+    const range       = c.high - c.low;
+    if (range < 0.001) continue;
+
+    const upperShadow = c.high - Math.max(c.open, c.close);
+    const lowerShadow = Math.min(c.open, c.close) - c.low;
+    const isBull = c.close >= c.open;
+    const isBear = c.close < c.open;
+
+    // 도지: 몸통이 전체 범위의 10% 미만
+    if (body / range < 0.10) {
+      results.push({
+        time: c.time, type: 'doji', nameKo: '도지',
+        signal: 'neutral', candleIndex: i,
+        description: '시가≈종가 — 매수·매도 균형. 다음 캔들 방향이 핵심 확인 신호.',
+      });
+      continue;
+    }
+
+    // 망치형: 아래 꼬리 > 2×몸통, 위 꼬리 < 몸통, 양봉
+    if (lowerShadow > body * 2 && upperShadow < body && isBull) {
+      results.push({
+        time: c.time, type: 'hammer', nameKo: '망치형',
+        signal: 'bullish', candleIndex: i,
+        description: '하락 후 강한 매수세 유입 — 하단 지지 확인, 상승 반전 가능성.',
+      });
+      continue;
+    }
+
+    // 슈팅스타: 위 꼬리 > 2×몸통, 아래 꼬리 < 몸통×0.5, 음봉
+    if (upperShadow > body * 2 && lowerShadow < body * 0.5 && isBear) {
+      results.push({
+        time: c.time, type: 'shooting_star', nameKo: '슈팅스타',
+        signal: 'bearish', candleIndex: i,
+        description: '상승 후 매도세 우위 — 상단 저항 확인, 하락 반전 신호.',
+      });
+      continue;
+    }
+
+    // 역망치형: 위 꼬리 > 2×몸통, 아래 꼬리 작음, 양봉
+    if (upperShadow > body * 2 && lowerShadow < body * 0.5 && isBull) {
+      results.push({
+        time: c.time, type: 'inv_hammer', nameKo: '역망치형',
+        signal: 'bullish', candleIndex: i,
+        description: '하락 후 상단 시도 — 다음 캔들 확인 후 반전 여부 판단.',
+      });
+      continue;
+    }
+
+    // 상승장악형: 전봉 음봉, 현봉 양봉이 전봉 몸통을 완전히 포함
+    if (p.close < p.open && isBull && c.open <= p.close && c.close >= p.open) {
+      results.push({
+        time: c.time, type: 'bullish_engulf', nameKo: '상승장악형',
+        signal: 'bullish', candleIndex: i,
+        description: '전일 하락 봉을 완전히 감싸는 상승 봉 — 강한 매수세 유입.',
+      });
+      continue;
+    }
+
+    // 하락장악형: 전봉 양봉, 현봉 음봉이 전봉 몸통을 완전히 포함
+    if (p.close > p.open && isBear && c.open >= p.close && c.close <= p.open) {
+      results.push({
+        time: c.time, type: 'bearish_engulf', nameKo: '하락장악형',
+        signal: 'bearish', candleIndex: i,
+        description: '전일 상승 봉을 완전히 감싸는 하락 봉 — 강한 매도세 유입.',
+      });
+      continue;
+    }
+
+    // 샛별형 (3봉 상승 반전): 음봉 → 소형봉 → 양봉(전봉 중간 이상)
+    const ppBody = Math.abs(pp.close - pp.open);
+    const pBody  = Math.abs(p.close  - p.open);
+    if (
+      pp.close < pp.open &&
+      pBody < ppBody * 0.35 &&
+      isBull && c.close > (pp.open + pp.close) / 2
+    ) {
+      results.push({
+        time: c.time, type: 'morning_star', nameKo: '샛별형',
+        signal: 'bullish', candleIndex: i,
+        description: '3봉 하락 반전 — 음봉→소형봉→강한 양봉. 바닥 전환 신호.',
+      });
+      continue;
+    }
+
+    // 석별형 (3봉 하락 반전): 양봉 → 소형봉 → 음봉(전봉 중간 이하)
+    if (
+      pp.close > pp.open &&
+      pBody < ppBody * 0.35 &&
+      isBear && c.close < (pp.open + pp.close) / 2
+    ) {
+      results.push({
+        time: c.time, type: 'evening_star', nameKo: '석별형',
+        signal: 'bearish', candleIndex: i,
+        description: '3봉 상승 반전 — 양봉→소형봉→강한 음봉. 천장 전환 신호.',
+      });
+    }
+  }
+
+  // 최근 30봉 이내 패턴만 반환
+  return results.filter(p => p.candleIndex >= n - 30);
+}
+
 export interface PatternPoint {
   time: string;
   price: number;

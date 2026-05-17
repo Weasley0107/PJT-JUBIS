@@ -12,7 +12,7 @@ import TokenExhaustedModal from '@/components/TokenExhaustedModal';
 import GuidePanel from '@/components/GuidePanel';
 import type { ChartDataPayload } from '@/components/charts/CandlestickChart';
 import type { DetectedPattern } from '@/lib/detectPatterns';
-import { detectPatterns } from '@/lib/detectPatterns';
+import { detectPatterns, detectCandlePatterns } from '@/lib/detectPatterns';
 import ReactMarkdown from 'react-markdown';
 
 const TOKEN_EXHAUSTED_MARKER = '__TOKEN_EXHAUSTED__';
@@ -97,6 +97,8 @@ export default function Home() {
     const last  = data.candles[data.candles.length - 1];
     const first = data.candles[0];
 
+    const candlePats = detectCandlePatterns(data.candles);
+
     const payload = {
       ticker,
       period,
@@ -115,7 +117,17 @@ export default function Home() {
       rsiPrev3: data.rsiLine?.slice(-3).map(r => +r.value.toFixed(1)) ?? [],
       bbUpper: data.bbLines ? lastVal(data.bbLines.upper) : null,
       bbLower: data.bbLines ? lastVal(data.bbLines.lower) : null,
+      macd:       data.macdLines ? lastVal(data.macdLines.macd) : null,
+      macdSignal: data.macdLines ? lastVal(data.macdLines.signal) : null,
+      macdHist:   data.macdLines?.histogram.length
+        ? data.macdLines.histogram[data.macdLines.histogram.length - 1].value
+        : null,
+      adx:      data.adxLines ? lastVal(data.adxLines.adx) : null,
+      plusDI:   data.adxLines ? lastVal(data.adxLines.plusDI) : null,
+      minusDI:  data.adxLines ? lastVal(data.adxLines.minusDI) : null,
       patterns: pats.map(p => ({ nameKo: p.nameKo, signal: p.signal, confidence: p.confidence, description: p.description })),
+      candlePatterns: candlePats.map(cp => ({ nameKo: cp.nameKo, signal: cp.signal, description: cp.description })),
+      recentSignals: data.tradeSignals?.slice(-8),
       volSpikeCount: data.volSpikes?.length ?? 0,
       sector:   data.sector,
       industry: data.industry,
@@ -325,7 +337,7 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white overflow-hidden transition-colors">
+    <div className="flex h-screen bg-gray-50 dark:bg-[#060d1a] text-gray-900 dark:text-[#e2e8f0] overflow-hidden transition-colors">
       {tokenExhaustedTime && (
         <TokenExhaustedModal
           resetTime={tokenExhaustedTime}
@@ -335,28 +347,50 @@ export default function Home() {
       )}
 
       {/* 사이드바 */}
-      <aside className="w-72 flex-shrink-0 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-colors">
+      <aside className="w-72 flex-shrink-0 bg-white dark:bg-[#080e1e] border-r border-gray-200 dark:border-[rgba(0,212,255,0.1)] flex flex-col transition-colors">
 
         {/* 헤더 */}
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)]">
           <div className="flex items-center justify-between mb-0.5">
             <button
               onClick={() => { setContent(''); setCurrentTicker(''); setSelectedHistoryId(null); setChartData(null); }}
-              className="flex items-center gap-2 hover:opacity-75 transition-opacity"
+              className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
             >
-              <span className="text-xl">📈</span>
-              <h1 className="font-bold text-gray-900 dark:text-white text-lg">JUBIS</h1>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(0,255,136,0.1))',
+                  border: '1px solid rgba(0,212,255,0.25)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" stroke="#00d4ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <polyline points="16 7 22 7 22 13" stroke="#00d4ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <h1
+                className="font-bold text-gray-900 dark:text-[#e2e8f0] text-lg"
+                style={{ fontFamily: 'var(--font-space-grotesk), sans-serif', letterSpacing: '-0.01em' }}
+              >
+                JUBIS
+              </h1>
             </button>
             <ThemeToggle />
           </div>
-          <div className="flex items-center justify-between mt-1">
-            <p className="text-xs text-gray-400 dark:text-gray-500">AI 주식 분석 에이전트</p>
+          <div className="flex items-center justify-between mt-1.5">
+            <p className="text-xs text-gray-400 dark:text-[#334155]">AI 주식 분석 에이전트</p>
             {loggedInUser && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 dark:text-gray-400">{loggedInUser}</span>
+                <span className="text-xs text-gray-500 dark:text-[#475569]">{loggedInUser}</span>
                 <button
                   onClick={handleLogout}
-                  className="text-xs text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 transition-colors"
+                  className="text-xs text-gray-400 hover:text-red-500 dark:text-[#475569] dark:hover:text-red-400 transition-colors"
                   title="로그아웃"
                 >
                   로그아웃
@@ -367,12 +401,12 @@ export default function Home() {
         </div>
 
         {/* 분석 폼 */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="p-4 border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)]">
           <AnalysisForm onSubmit={handleAnalyze} isLoading={isStreaming} />
         </div>
 
         {/* CLI 로그인 상태 */}
-        <div className="px-4 pt-3 pb-2 border-b border-gray-200 dark:border-gray-800">
+        <div className="px-4 pt-3 pb-2 border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)]">
           <ClaudeAuthStatus usageRefreshTrigger={usageRefreshTrigger} />
         </div>
 
@@ -380,27 +414,31 @@ export default function Home() {
         <div className="px-4 pb-2">
           <button
             onClick={() => setShowGuide((v) => !v)}
-            className={`flex items-center gap-2 w-full px-3 py-2 text-xs rounded-lg transition-colors ${
+            className={`flex items-center gap-2 w-full px-3 py-2 text-xs rounded-lg transition-all ${
               showGuide
-                ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
-                : 'text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                ? 'text-[#00d4ff] bg-[rgba(0,212,255,0.06)] border border-[rgba(0,212,255,0.25)]'
+                : 'text-gray-500 dark:text-[#475569] hover:text-[#00d4ff] dark:hover:text-[#00d4ff] hover:bg-gray-50 dark:hover:bg-[rgba(0,212,255,0.04)] border border-transparent'
             }`}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
             </svg>
             주식 가이드 (용어·차트 읽기)
-            {showGuide && <span className="ml-auto text-[9px] px-1 py-0.5 bg-blue-500 text-white rounded">열림</span>}
+            {showGuide && (
+              <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded font-semibold" style={{ background: 'rgba(0,212,255,0.15)', color: '#00d4ff', border: '1px solid rgba(0,212,255,0.3)' }}>
+                열림
+              </span>
+            )}
           </button>
         </div>
 
         {/* 히스토리 */}
         <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-4 gap-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">히스토리</h2>
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-[#334155] uppercase tracking-wider">히스토리</h2>
             <button
               onClick={() => setHistoryRefresh((n) => n + 1)}
-              className="text-gray-400 hover:text-gray-600 dark:text-gray-600 dark:hover:text-gray-400 text-xs transition-colors"
+              className="text-gray-400 hover:text-gray-600 dark:text-[#334155] dark:hover:text-[#64748b] text-xs transition-colors"
             >
               새로고침
             </button>
@@ -420,23 +458,24 @@ export default function Home() {
       <main className="flex-1 flex flex-col overflow-hidden">
 
         {/* 상단 바 */}
-        <div className="relative flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/50 backdrop-blur-sm flex-shrink-0 transition-colors">
+        <div className="relative flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)] bg-white/80 dark:bg-[rgba(8,14,30,0.8)] backdrop-blur-sm flex-shrink-0 transition-colors">
           <div className="flex items-center gap-2">
             {currentTicker ? (
               <>
-                <span className="font-mono font-bold text-gray-900 dark:text-white">{currentTicker}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300">
+                <span className="font-mono font-bold text-gray-900 dark:text-[#e2e8f0]">{currentTicker}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-emerald-100 dark:bg-[rgba(0,255,136,0.08)] text-emerald-600 dark:text-[#00ff88]" style={{ border: '1px solid rgba(0,255,136,0.2)' }}>
                   CLI
                 </span>
                 {isStreaming && (
                   <>
-                    <span className="flex items-center gap-1.5 text-blue-500 dark:text-blue-400 text-xs">
-                      <span className="w-1.5 h-1.5 bg-blue-500 dark:bg-blue-400 rounded-full animate-pulse" />
-                      분석 중... {elapsedSecs > 0 && <span className="text-gray-400 dark:text-gray-500">{elapsedSecs}s</span>}
+                    <span className="flex items-center gap-1.5 text-[#00d4ff] text-xs">
+                      <span className="w-1.5 h-1.5 bg-[#00d4ff] rounded-full animate-pulse" />
+                      분석 중... {elapsedSecs > 0 && <span className="text-gray-400 dark:text-[#334155]">{elapsedSecs}s</span>}
                     </span>
                     <button
                       onClick={handleStop}
-                      className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg transition-colors"
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg transition-colors"
+                      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}
                     >
                       <span className="w-2 h-2 bg-red-500 rounded-sm inline-block" />
                       중지
@@ -445,14 +484,15 @@ export default function Home() {
                 )}
               </>
             ) : (
-              <span className="text-gray-400 dark:text-gray-600 text-sm">종목을 선택하거나 분석을 시작하세요</span>
+              <span className="text-gray-400 dark:text-[#334155] text-sm">종목을 선택하거나 분석을 시작하세요</span>
             )}
           </div>
 
           {content && !isStreaming && (
             <button
               onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-colors text-gray-600 dark:text-gray-300"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all text-gray-600 dark:text-[#64748b] hover:text-gray-900 dark:hover:text-[#94a3b8]"
+              style={{ background: 'rgba(0,212,255,0.04)', border: '1px solid rgba(0,212,255,0.1)' }}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -464,10 +504,10 @@ export default function Home() {
 
           {/* 프로그레스바 */}
           {progress > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-100 dark:bg-gray-800">
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-100 dark:bg-[rgba(0,212,255,0.05)]">
               <div
-                className="h-full bg-blue-500 transition-all duration-500 ease-out"
-                style={{ width: `${progress}%` }}
+                className="h-full transition-all duration-500 ease-out"
+                style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #00d4ff, #00ff88)' }}
               />
             </div>
           )}
@@ -486,39 +526,39 @@ export default function Home() {
               isAnalyzingChart={isChartAnalyzing}
             />
           ) : (
-            <div className="h-[52px] flex items-center px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
-              <span className="text-xs text-gray-400 dark:text-gray-500 animate-pulse">차트 데이터 로딩 중...</span>
+            <div className="h-[52px] flex items-center px-4 border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)] bg-white dark:bg-[#080e1e] flex-shrink-0">
+              <span className="text-xs text-gray-400 dark:text-[#334155] animate-pulse">차트 데이터 로딩 중...</span>
             </div>
           )
         )}
 
         {/* AI 차트 해석 결과 패널 */}
         {(chartAnalysis || isChartAnalyzing) && (
-          <div className="border-b border-gray-200 dark:border-gray-800 bg-indigo-50/40 dark:bg-indigo-950/20 px-5 py-3 flex-shrink-0">
+          <div className="border-b border-gray-200 dark:border-[rgba(0,212,255,0.08)] px-5 py-3 flex-shrink-0" style={{ background: 'rgba(0,212,255,0.03)' }}>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full bg-indigo-500 ${isChartAnalyzing ? 'animate-pulse' : ''}`} />
+              <span className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: '#00d4ff' }}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isChartAnalyzing ? 'animate-pulse' : ''}`} style={{ background: '#00d4ff' }} />
                 AI 차트 해석
-                {isChartAnalyzing && <span className="text-gray-400 dark:text-gray-500 font-normal">분석 중...</span>}
+                {isChartAnalyzing && <span className="text-gray-400 dark:text-[#334155] font-normal">분석 중...</span>}
               </span>
               {!isChartAnalyzing && (
                 <button
                   onClick={() => setChartAnalysis('')}
-                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs"
+                  className="text-gray-400 dark:text-[#334155] hover:text-gray-600 dark:hover:text-[#64748b] text-xs transition-colors"
                 >✕</button>
               )}
             </div>
-            <div className="prose prose-xs max-w-none dark:prose-invert prose-p:my-1 prose-p:text-xs prose-strong:text-gray-900 dark:prose-strong:text-white text-gray-700 dark:text-gray-300">
+            <div className="prose prose-xs max-w-none dark:prose-invert prose-p:my-1 prose-p:text-xs prose-strong:text-gray-900 dark:prose-strong:text-[#e2e8f0] text-gray-700 dark:text-[#94a3b8]">
               <ReactMarkdown>{chartAnalysis || ' '}</ReactMarkdown>
               {isChartAnalyzing && (
-                <span className="inline-block w-1.5 h-3.5 bg-indigo-400 ml-0.5 animate-pulse align-middle" />
+                <span className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse align-middle" style={{ background: '#00d4ff' }} />
               )}
             </div>
           </div>
         )}
 
         {/* 스트리밍 출력 */}
-        <div className="flex-1 overflow-hidden bg-white dark:bg-gray-950 transition-colors">
+        <div className="flex-1 overflow-hidden bg-white dark:bg-[#060d1a] transition-colors">
           <StreamingOutput content={content} isStreaming={isStreaming} />
         </div>
       </main>
