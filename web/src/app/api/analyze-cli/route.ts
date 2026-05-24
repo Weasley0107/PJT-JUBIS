@@ -65,6 +65,8 @@ export async function POST(request: NextRequest) {
   let input_tokens = 0;
   let output_tokens = 0;
   let aborted = false;
+  // controller 상태 플래그 — start/cancel/abort 모두에서 공유해야 race를 막을 수 있다
+  let closed = false;
 
   // child를 cancel() 콜백에서도 접근하기 위해 외부에 참조 보관
   let childRef: ReturnType<typeof spawn> | null = null;
@@ -87,9 +89,21 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
-      let closed = false;
-      const safeEnqueue = (text: string) => { if (!closed) controller.enqueue(encoder.encode(text)); };
-      const safeClose = () => { if (!closed) { closed = true; controller.close(); } };
+      // closed는 상위 스코프에서 선언 — cancel()이나 abort 핸들러가 닫혀버린 controller에 enqueue하는 경합을 막는다.
+      const safeEnqueue = (text: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(text));
+        } catch {
+          // controller가 이미 닫힌 경우(abort/cancel 직후 child stdout 잔여 청크) — 한 번만 표시하고 무시
+          closed = true;
+        }
+      };
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try { controller.close(); } catch { /* already closed by cancel/abort */ }
+      };
 
       // OAuth(구독) 모드 강제: API 키 환경변수가 있으면 CLI가 그쪽을 우선 사용하므로 제거.
       // PATH 등 시스템 환경변수는 그대로 보존해야 claude.cmd 위치를 찾을 수 있음.
@@ -124,6 +138,8 @@ export async function POST(request: NextRequest) {
       // 클라이언트가 fetch를 abort하면 child process 종료
       request.signal.addEventListener('abort', () => {
         aborted = true;
+        // abort 즉시 closed 마킹 — 이후 stdout 잔여 청크가 safeEnqueue를 호출해도 무시되도록
+        closed = true;
         console.log(`[CLI] 사용자 중단 요청`);
         if (!child.killed) child.kill('SIGTERM');
       });
@@ -221,6 +237,8 @@ export async function POST(request: NextRequest) {
     },
     cancel() {
       // ReadableStream 자체가 취소될 때(브라우저 탭 닫기 등) child 정리
+      // closed=true 마킹이 우선 — 이후 child stdout/close 핸들러가 safeEnqueue를 호출해도 enqueue를 건너뛴다
+      closed = true;
       if (childRef && !childRef.killed) {
         aborted = true;
         childRef.kill('SIGTERM');
